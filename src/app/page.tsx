@@ -24,6 +24,8 @@ import {
 } from "lucide-react";
 import canvasConfetti from "canvas-confetti";
 import { encryptAndSplit, reconstructAndDecrypt, EncryptedPayload } from "../utils/crypto";
+import { getVaultContract, DEFAULT_CONTRACT_ADDRESS } from "../utils/contract";
+import { BrowserProvider, ethers } from "ethers";
 
 // Define Types
 interface Vault {
@@ -126,6 +128,9 @@ export default function LastWishApp() {
   // Vault Management States
   const [vaults, setVaults] = useState<Vault[]>([]);
   const [timerSeconds, setTimerSeconds] = useState<number>(0);
+  
+  // Smart Contract Configuration State
+  const [contractAddress, setContractAddress] = useState<string>(DEFAULT_CONTRACT_ADDRESS);
 
   // Create Vault Wizard State
   const [step, setStep] = useState<number>(1);
@@ -208,17 +213,99 @@ export default function LastWishApp() {
     return () => clearInterval(interval);
   }, []);
 
-  // Connect Wallet Simulation
-  const connectWallet = (address = "6ab162056d73bc7fc901af572a188f572c188f356") => {
+  // Sync vault states with contract on-chain
+  const syncVaultsWithBlockchain = async () => {
+    if (!isConnected || userAddress.startsWith("0x6ab162")) return;
+    try {
+      const contract = await getVaultContract(contractAddress);
+      const savedVaults = localStorage.getItem("lastwish_vaults");
+      if (!savedVaults) return;
+      const currentVaults: Vault[] = JSON.parse(savedVaults);
+
+      let changed = false;
+      const synced = await Promise.all(currentVaults.map(async (v) => {
+        if (!v.id.startsWith("0x") || v.id.length !== 66) {
+          return v;
+        }
+        try {
+          const details = await contract.getVaultDetails(v.id);
+          const statusMap: ("ACTIVE" | "PENDING_UNLOCK" | "UNLOCKED")[] = ["ACTIVE", "PENDING_UNLOCK", "UNLOCKED"];
+          const newHeartbeat = Number(details.lastHeartbeat) * 1000;
+          const newStatus = statusMap[Number(details.status)] || v.status;
+          
+          if (v.lastHeartbeat !== newHeartbeat || v.status !== newStatus) {
+            changed = true;
+          }
+          return {
+            ...v,
+            lastHeartbeat: newHeartbeat,
+            status: newStatus
+          };
+        } catch (e) {
+          return v;
+        }
+      }));
+
+      if (changed) {
+        setVaults(synced);
+        localStorage.setItem("lastwish_vaults", JSON.stringify(synced));
+      }
+    } catch (err) {
+      console.warn("Periodic sync failed:", err);
+    }
+  };
+
+  // Run periodic sync every 10 seconds
+  useEffect(() => {
+    if (isConnected && !userAddress.startsWith("0x6ab162")) {
+      const interval = setInterval(() => {
+        syncVaultsWithBlockchain();
+      }, 10000);
+      return () => clearInterval(interval);
+    }
+  }, [isConnected, userAddress, contractAddress]);
+
+  // Connect Wallet
+  const connectWallet = async (overrideAddress?: string) => {
+    if (overrideAddress) {
+      setIsConnected(true);
+      setUserAddress(overrideAddress);
+      setShowLanding(false);
+      return;
+    }
+
+    if (typeof window !== "undefined" && (window as any).ethereum) {
+      try {
+        const provider = new BrowserProvider((window as any).ethereum);
+        const accounts = await (window as any).ethereum.request({ method: "eth_requestAccounts" });
+        const address = accounts[0];
+        setIsConnected(true);
+        setUserAddress(address);
+        setShowLanding(false);
+        canvasConfetti({
+          particleCount: 50,
+          spread: 60,
+          colors: ["#e5c483", "#faf6ee", "#ddb892"],
+          origin: { y: 0.8 }
+        });
+        
+        // Immediate sync
+        setTimeout(() => syncVaultsWithBlockchain(), 500);
+      } catch (err: any) {
+        console.error("Connection failed:", err);
+        fallbackToSim();
+      }
+    } else {
+      fallbackToSim();
+    }
+  };
+
+  const fallbackToSim = () => {
+    const mockAddress = "0x6ab162056d73bc7fc901af572a188f572c188f356";
     setIsConnected(true);
-    setUserAddress(address);
+    setUserAddress(mockAddress);
     setShowLanding(false);
-    canvasConfetti({
-      particleCount: 50,
-      spread: 60,
-      colors: ["#e5c483", "#faf6ee", "#ddb892"],
-      origin: { y: 0.8 }
-    });
+    alert("MetaMask not detected or connection rejected. Running in simulated sandbox mode.");
   };
 
   const disconnectWallet = () => {
@@ -229,32 +316,89 @@ export default function LastWishApp() {
   };
 
   // Perform heartbeat check-in
-  const triggerHeartbeat = (vaultId: string) => {
-    setVaults(prev => {
-      const updated = prev.map(v => {
-        if (v.id === vaultId) {
-          return {
-            ...v,
-            lastHeartbeat: Date.now(),
-            status: "ACTIVE" as const
-          };
-        }
-        return v;
-      });
-      localStorage.setItem("lastwish_vaults", JSON.stringify(updated));
-      return updated;
-    });
+  const triggerHeartbeat = async (vaultId: string) => {
+    let success = false;
+    
+    if (isConnected && !userAddress.startsWith("0x6ab162") && vaultId.startsWith("0x") && vaultId.length === 66) {
+      try {
+        const contract = await getVaultContract(contractAddress);
+        const tx = await contract.heartbeat(vaultId);
+        await tx.wait();
+        success = true;
+      } catch (err: any) {
+        console.error("On-chain heartbeat failed:", err);
+        alert("Smart contract heartbeat call failed: " + (err.reason || err.message));
+        return;
+      }
+    } else {
+      success = true; // sandbox simulation
+    }
 
-    canvasConfetti({
-      particleCount: 20,
-      spread: 40,
-      colors: ["#e5c483", "#faf6ee"]
-    });
+    if (success) {
+      setVaults(prev => {
+        const updated = prev.map(v => {
+          if (v.id === vaultId) {
+            return {
+              ...v,
+              lastHeartbeat: Date.now(),
+              status: "ACTIVE" as const
+            };
+          }
+          return v;
+        });
+        localStorage.setItem("lastwish_vaults", JSON.stringify(updated));
+        return updated;
+      });
+
+      canvasConfetti({
+        particleCount: 20,
+        spread: 40,
+        colors: ["#e5c483", "#faf6ee"]
+      });
+    }
   };
 
   // Trigger Veto
-  const triggerVeto = (vaultId: string) => {
-    triggerHeartbeat(vaultId);
+  const triggerVeto = async (vaultId: string) => {
+    let success = false;
+    
+    if (isConnected && !userAddress.startsWith("0x6ab162") && vaultId.startsWith("0x") && vaultId.length === 66) {
+      try {
+        const contract = await getVaultContract(contractAddress);
+        const tx = await contract.veto(vaultId);
+        await tx.wait();
+        success = true;
+      } catch (err: any) {
+        console.error("On-chain veto failed:", err);
+        alert("Smart contract veto call failed: " + (err.reason || err.message));
+        return;
+      }
+    } else {
+      success = true; // sandbox simulation
+    }
+
+    if (success) {
+      setVaults(prev => {
+        const updated = prev.map(v => {
+          if (v.id === vaultId) {
+            return {
+              ...v,
+              lastHeartbeat: Date.now(),
+              status: "ACTIVE" as const
+            };
+          }
+          return v;
+        });
+        localStorage.setItem("lastwish_vaults", JSON.stringify(updated));
+        return updated;
+      });
+
+      canvasConfetti({
+        particleCount: 40,
+        spread: 50,
+        colors: ["#e5c483", "#faf6ee"]
+      });
+    }
   };
 
   // Create Vault Wizard Handlers
@@ -263,17 +407,44 @@ export default function LastWishApp() {
     if (!newVaultName || !newRecipient || !newContent) return;
 
     setIsEncrypting(true);
-    await new Promise(resolve => setTimeout(resolve, 1500));
 
     try {
+      // Step 1: Encrypt locally and split keys
       const result = await encryptAndSplit(newContent, 2, 3);
       
-      const newId = "0x" + Array.from({ length: 12 }, () => 
+      // Step 2: Generate a unique bytes32 ID
+      const randomBytes = ethers.randomBytes(32);
+      const vaultIdBytes32 = ethers.hexlify(randomBytes);
+
+      let onChainRegistered = false;
+      
+      // Step 3: Try to register on-chain if connected to MetaMask
+      if (isConnected && !userAddress.startsWith("0x6ab162")) {
+        try {
+          const contract = await getVaultContract(contractAddress);
+          const tx = await contract.createVault(
+            vaultIdBytes32,
+            newRecipient,
+            newInactivity,
+            newGrace,
+            result.shares[0], // Share 1 is locked in contract
+            "ipfs://" + (newVaultName.toLowerCase().replace(/\s+/g, "-") + "-cid") // IPFS mock CID
+          );
+          await tx.wait();
+          onChainRegistered = true;
+        } catch (contractErr: any) {
+          console.error("On-chain registration failed, falling back to local simulation:", contractErr);
+          alert("Smart contract transaction failed/rejected. Storing vault locally in simulation mode.\nError: " + (contractErr.reason || contractErr.message));
+        }
+      }
+
+      // If not registered on-chain, we use a shortened ID for simulation readability
+      const finalId = onChainRegistered ? vaultIdBytes32 : "0x" + Array.from({ length: 12 }, () => 
         Math.floor(Math.random() * 16).toString(16)
       ).join("") + "...";
 
       const createdVault: Vault = {
-        id: newId,
+        id: finalId,
         name: newVaultName,
         recipientAddress: newRecipient,
         inactivityPeriod: newInactivity,
@@ -293,10 +464,10 @@ export default function LastWishApp() {
 
       setCreatedVaultPayload(result.payload);
       setCreatedVaultShares(result.shares);
-      setCreatedVaultId(newId);
+      setCreatedVaultId(finalId);
       setStep(4);
-    } catch (err) {
-      alert("Error: " + err);
+    } catch (err: any) {
+      alert("Error: " + err.message);
     } finally {
       setIsEncrypting(false);
     }
@@ -334,21 +505,35 @@ export default function LastWishApp() {
       return;
     }
 
-    if (targetVault.status !== "UNLOCKED") {
-      setDecryptionError(`Vault is currently locked. Status: ${targetVault.status}. The inactivity period must fully expire.`);
-      return;
-    }
-
-    if (!recipientShareInput.trim()) {
-      setDecryptionError("Please input your Key Share.");
-      return;
-    }
-
+    // Let's check if the vault is on-chain and retrieve Share 1 from the contract!
+    let share1ToUse = targetVault.share1;
+    
     setIsDecrypting(true);
     await new Promise(resolve => setTimeout(resolve, 1200));
 
     try {
-      const sharesToUse = [targetVault.share1, recipientShareInput.trim()];
+      if (isConnected && !userAddress.startsWith("0x6ab162") && targetVault.id.startsWith("0x") && targetVault.id.length === 66) {
+        try {
+          const contract = await getVaultContract(contractAddress);
+          // The contract view function claimVaultShare returns the locked Share 1
+          const onChainShare1 = await contract.claimVaultShare(targetVault.id);
+          share1ToUse = onChainShare1;
+        } catch (contractErr: any) {
+          console.error("On-chain claimVaultShare failed:", contractErr);
+          throw new Error("Failed to retrieve locked key share from the smart contract. " + (contractErr.reason || contractErr.message));
+        }
+      } else {
+        // If in simulation, let's verify if the status is unlocked
+        if (targetVault.status !== "UNLOCKED") {
+          throw new Error(`Vault is currently locked. Status: ${targetVault.status}. The inactivity period must fully expire.`);
+        }
+      }
+
+      if (!recipientShareInput.trim()) {
+        throw new Error("Please input your Key Share (Share 2).");
+      }
+
+      const sharesToUse = [share1ToUse, recipientShareInput.trim()];
       const decrypted = await reconstructAndDecrypt(targetVault.payload, sharesToUse);
       setDecryptionResult(decrypted);
       
@@ -358,7 +543,7 @@ export default function LastWishApp() {
         colors: ["#faf6ee", "#e5c483", "#ddb892"]
       });
     } catch (err: any) {
-      setDecryptionError("Decryption failed. The Key Share is incorrect or corrupted.");
+      setDecryptionError(err.message || "Decryption failed. The Key Share is incorrect or corrupted.");
     } finally {
       setIsDecrypting(false);
     }
@@ -572,6 +757,20 @@ export default function LastWishApp() {
                           <span className="text-gray-400">Primary Wallet:</span>
                           <span className="text-[#ddb892] text-[10px] break-all">{userAddress}</span>
                         </div>
+                        {!userAddress.startsWith("0x6ab162") && (
+                          <div className="flex flex-col space-y-1 py-2 border-t border-gray-900/40">
+                            <span className="text-gray-400">Contract Address:</span>
+                            <input 
+                              type="text"
+                              value={contractAddress}
+                              onChange={(e) => {
+                                setContractAddress(e.target.value);
+                                localStorage.setItem("lastwish_contract_address", e.target.value);
+                              }}
+                              className="bg-gray-950 border border-gray-900/80 rounded px-2.5 py-1.5 text-[10px] text-gray-300 font-mono focus:outline-none focus:border-[#e5c483]/30 w-full"
+                            />
+                          </div>
+                        )}
                       </div>
                     </div>
 
