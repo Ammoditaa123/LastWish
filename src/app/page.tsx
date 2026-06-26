@@ -25,6 +25,7 @@ import {
 import canvasConfetti from "canvas-confetti";
 import { encryptAndSplit, reconstructAndDecrypt, EncryptedPayload } from "../utils/crypto";
 import { getVaultContract, DEFAULT_CONTRACT_ADDRESS } from "../utils/contract";
+import { uploadToIPFS, downloadFromIPFS } from "../utils/ipfs";
 import { BrowserProvider, ethers } from "ethers";
 
 // Define Types
@@ -412,13 +413,17 @@ export default function LastWishApp() {
       // Step 1: Encrypt locally and split keys
       const result = await encryptAndSplit(newContent, 2, 3);
       
-      // Step 2: Generate a unique bytes32 ID
+      // Step 2: Upload encrypted payload to IPFS (via Pinata or fallback local simulation)
+      const ipfsHash = await uploadToIPFS(result.payload, newVaultName);
+      const ipfsUri = `ipfs://${ipfsHash}`;
+
+      // Step 3: Generate a unique bytes32 ID
       const randomBytes = ethers.randomBytes(32);
       const vaultIdBytes32 = ethers.hexlify(randomBytes);
 
       let onChainRegistered = false;
       
-      // Step 3: Try to register on-chain if connected to MetaMask
+      // Step 4: Try to register on-chain if connected to MetaMask
       if (isConnected && !userAddress.startsWith("0x6ab162")) {
         try {
           const contract = await getVaultContract(contractAddress);
@@ -428,7 +433,7 @@ export default function LastWishApp() {
             newInactivity,
             newGrace,
             result.shares[0], // Share 1 is locked in contract
-            "ipfs://" + (newVaultName.toLowerCase().replace(/\s+/g, "-") + "-cid") // IPFS mock CID
+            ipfsUri
           );
           await tx.wait();
           onChainRegistered = true;
@@ -507,6 +512,7 @@ export default function LastWishApp() {
 
     // Let's check if the vault is on-chain and retrieve Share 1 from the contract!
     let share1ToUse = targetVault.share1;
+    let payloadToUse = targetVault.payload;
     
     setIsDecrypting(true);
     await new Promise(resolve => setTimeout(resolve, 1200));
@@ -515,12 +521,20 @@ export default function LastWishApp() {
       if (isConnected && !userAddress.startsWith("0x6ab162") && targetVault.id.startsWith("0x") && targetVault.id.length === 66) {
         try {
           const contract = await getVaultContract(contractAddress);
-          // The contract view function claimVaultShare returns the locked Share 1
+          
+          // 1. Fetch on-chain Share 1
           const onChainShare1 = await contract.claimVaultShare(targetVault.id);
           share1ToUse = onChainShare1;
+
+          // 2. Fetch on-chain details to get IPFS CID
+          const details = await contract.getVaultDetails(targetVault.id);
+          const ipfsUri = details.ipfsHash; // e.g. "ipfs://Qm..."
+
+          // 3. Download encrypted payload from IPFS
+          payloadToUse = await downloadFromIPFS(ipfsUri);
         } catch (contractErr: any) {
-          console.error("On-chain claimVaultShare failed:", contractErr);
-          throw new Error("Failed to retrieve locked key share from the smart contract. " + (contractErr.reason || contractErr.message));
+          console.error("On-chain claimVaultShare / IPFS download failed:", contractErr);
+          throw new Error("Failed to retrieve locked data from the smart contract or IPFS. " + (contractErr.reason || contractErr.message));
         }
       } else {
         // If in simulation, let's verify if the status is unlocked
@@ -534,7 +548,7 @@ export default function LastWishApp() {
       }
 
       const sharesToUse = [share1ToUse, recipientShareInput.trim()];
-      const decrypted = await reconstructAndDecrypt(targetVault.payload, sharesToUse);
+      const decrypted = await reconstructAndDecrypt(payloadToUse, sharesToUse);
       setDecryptionResult(decrypted);
       
       canvasConfetti({
