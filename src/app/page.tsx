@@ -99,6 +99,9 @@ export default function LastWishApp() {
   // Smart Contract Configuration State
   const [contractAddress, setContractAddress] = useState<string>(DEFAULT_CONTRACT_ADDRESS);
 
+  // Sandbox vs Web3 Modes State
+  const [isSandboxMode, setIsSandboxMode] = useState<boolean>(false);
+
   // Create Vault Wizard State
   const [step, setStep] = useState<number>(1);
   const [isWizardActive, setIsWizardActive] = useState<boolean>(false);
@@ -132,12 +135,24 @@ export default function LastWishApp() {
     const savedVaults = localStorage.getItem("lastwish_vaults");
     if (savedVaults) {
       try {
-        setVaults(JSON.parse(savedVaults));
+        const parsed: Vault[] = JSON.parse(savedVaults);
+        // Clear/filter out any old mock seed vaults from prior sessions
+        const filtered = parsed.filter(v => 
+          v.id !== "0x8a92f012b3c7..." && 
+          v.id !== "0xfb78a9c2d1b8..."
+        );
+        setVaults(filtered);
+        localStorage.setItem("lastwish_vaults", JSON.stringify(filtered));
       } catch (e) {
         setVaults(INITIAL_VAULTS);
       }
     } else {
       setVaults(INITIAL_VAULTS);
+    }
+
+    const savedAddress = localStorage.getItem("lastwish_contract_address");
+    if (savedAddress) {
+      setContractAddress(savedAddress);
     }
   }, []);
 
@@ -238,6 +253,7 @@ export default function LastWishApp() {
       setIsConnected(true);
       setUserAddress(overrideAddress);
       setShowLanding(false);
+      setIsSandboxMode(false);
       return;
     }
 
@@ -249,6 +265,7 @@ export default function LastWishApp() {
         setIsConnected(true);
         setUserAddress(address);
         setShowLanding(false);
+        setIsSandboxMode(false);
         canvasConfetti({
           particleCount: 50,
           spread: 60,
@@ -272,7 +289,7 @@ export default function LastWishApp() {
     setIsConnected(true);
     setUserAddress(mockAddress);
     setShowLanding(false);
-    alert("MetaMask not detected or connection rejected. Running in simulated sandbox mode.");
+    setIsSandboxMode(true);
   };
 
   const disconnectWallet = () => {
@@ -280,6 +297,7 @@ export default function LastWishApp() {
     setUserAddress("");
     setIsWizardActive(false);
     setShowLanding(true);
+    setIsSandboxMode(false);
   };
 
   // Perform heartbeat check-in
@@ -652,6 +670,14 @@ export default function LastWishApp() {
           )}
         </div>
       </header>
+
+      {/* Sandbox Warning Banner */}
+      {isConnected && isSandboxMode && (
+        <div className="w-full bg-[#e5c483]/10 border-b border-[#e5c483]/20 py-2.5 px-4 text-center text-xs text-[#e5c483] font-mono flex items-center justify-center space-x-2 z-20">
+          <AlertTriangle className="w-4 h-4 text-[#e5c483] animate-pulse" />
+          <span>MetaMask not detected. Running in Sandbox Simulation mode.</span>
+        </div>
+      )}
 
       {/* Main DApp Container */}
       <main className="flex-1 flex flex-col justify-center items-center p-4 md:p-8 z-10 max-w-7xl w-full mx-auto relative">
