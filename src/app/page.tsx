@@ -20,7 +20,9 @@ import {
   Sparkles,
   Mail,
   Copy,
-  Check
+  Check,
+  Search,
+  Eye
 } from "lucide-react";
 import canvasConfetti from "canvas-confetti";
 import { encryptAndSplit, reconstructAndDecrypt, EncryptedPayload } from "../utils/crypto";
@@ -71,7 +73,7 @@ const Star: React.FC<StarProps> = ({ top, left, size, delay }) => (
 export default function LastWishApp() {
   // App navigation state (Landing leads to Dash/Claim)
   const [showLanding, setShowLanding] = useState<boolean>(true);
-  const [activeTab, setActiveTab] = useState<"owner" | "recipient" | "playground">("owner");
+  const [activeTab, setActiveTab] = useState<"owner" | "recipient" | "inspector" | "playground">("owner");
   
   // Wallet Connection Simulation
   const [isConnected, setIsConnected] = useState<boolean>(false);
@@ -129,6 +131,12 @@ export default function LastWishApp() {
   const [pgDecryptedText, setPgDecryptedText] = useState<string>("");
   const [pgDecryptedError, setPgDecryptedError] = useState<string>("");
   const [pgPayload, setPgPayload] = useState<EncryptedPayload | null>(null);
+
+  // On-Chain Vault Inspector State
+  const [inspectVaultId, setInspectVaultId] = useState<string>("");
+  const [inspectedVault, setInspectedVault] = useState<any | null>(null);
+  const [inspectError, setInspectError] = useState<string | null>(null);
+  const [isInspectLoading, setIsInspectLoading] = useState<boolean>(false);
 
   // Load vaults from localStorage
   useEffect(() => {
@@ -401,6 +409,51 @@ export default function LastWishApp() {
     }
   };
 
+  // Query On-Chain Vault Metadata
+  const queryOnChainVault = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setInspectError(null);
+    setInspectedVault(null);
+
+    const cleanId = inspectVaultId.trim();
+    if (!cleanId.startsWith("0x") || cleanId.length !== 66) {
+      setInspectError("Please enter a valid 66-character bytes32 Vault ID (starting with 0x).");
+      return;
+    }
+
+    setIsInspectLoading(true);
+    try {
+      const contract = await getVaultContract(contractAddress);
+      console.log(`[Inspector] Querying contract details for Vault ID: ${cleanId}...`);
+      const details = await contract.getVaultDetails(cleanId);
+      
+      const statusMap = ["ACTIVE", "PENDING_UNLOCK", "UNLOCKED"];
+      const status = statusMap[Number(details.status)] || "UNKNOWN";
+      
+      setInspectedVault({
+        id: cleanId,
+        owner: details.owner,
+        recipient: details.recipient,
+        inactivityPeriod: Number(details.inactivityPeriod),
+        gracePeriod: Number(details.gracePeriod),
+        lastHeartbeat: Number(details.lastHeartbeat) * 1000,
+        ipfsHash: details.ipfsHash,
+        status: status
+      });
+
+      canvasConfetti({
+        particleCount: 25,
+        spread: 40,
+        colors: ["#e5c483", "#faf6ee"]
+      });
+    } catch (err: any) {
+      console.error("Inspector fetch failed:", err);
+      setInspectError(err.reason || err.message || "Failed to fetch details. Make sure the Vault ID is correct and you are connected to Base Sepolia.");
+    } finally {
+      setIsInspectLoading(false);
+    }
+  };
+
   // Create Vault Wizard Handlers
   const handleCreateVault = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -644,7 +697,7 @@ export default function LastWishApp() {
 
         {/* Central Tab Navigation Container */}
         {!showLanding && (
-          <div className="flex bg-gray-950/80 border border-gray-900 rounded-full p-1 max-w-sm w-full mx-auto justify-between text-[10px] sm:text-xs">
+          <div className="flex bg-gray-950/80 border border-gray-900 rounded-full p-1 max-w-lg w-full mx-auto justify-between text-[10px] sm:text-xs">
             <button 
               onClick={() => { setActiveTab("owner"); setIsWizardActive(false); }}
               className={`flex-1 py-1.5 px-2 text-center font-semibold rounded-full transition-all cursor-pointer ${
@@ -662,6 +715,15 @@ export default function LastWishApp() {
             >
               <span className="hidden sm:inline">Claim Legacy Portal</span>
               <span className="sm:hidden">Claim</span>
+            </button>
+            <button 
+              onClick={() => { setActiveTab("inspector"); setIsWizardActive(false); }}
+              className={`flex-1 py-1.5 px-2 text-center font-semibold rounded-full transition-all cursor-pointer ${
+                activeTab === "inspector" ? "bg-gray-900 text-[#faf6ee] border border-[rgba(229,196,131,0.08)]" : "text-gray-400 hover:text-white"
+              }`}
+            >
+              <span className="hidden sm:inline">Vault Inspector</span>
+              <span className="sm:hidden">Inspect</span>
             </button>
             <button 
               onClick={() => { setActiveTab("playground"); setIsWizardActive(false); }}
@@ -1265,6 +1327,148 @@ export default function LastWishApp() {
                         </div>
                       </div>
                     )}
+                  </motion.div>
+                )}
+
+                {/* Vault Inspector View */}
+                {activeTab === "inspector" && (
+                  <motion.div
+                    key="inspector-tab-view"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ duration: 0.3 }}
+                    className="space-y-6"
+                  >
+                    <div className="glass-panel p-6 md:p-8 rounded-3xl space-y-6">
+                      <div>
+                        <span className="text-[10px] text-[#e5c483] font-mono uppercase tracking-widest font-bold">On-Chain State Explorer</span>
+                        <h3 className="text-xl font-bold text-white mt-0.5 flex items-center space-x-2">
+                          <Search className="w-5 h-5 text-[#e5c483]" />
+                          <span>Vault Metadata Inspector</span>
+                        </h3>
+                        <p className="text-xs text-gray-400 mt-1">
+                          Query the Base Sepolia blockchain to read the public parameters and dynamic lock status of any digital legacy vault in real-time.
+                        </p>
+                      </div>
+
+                      <form onSubmit={queryOnChainVault} className="space-y-4">
+                        <div className="space-y-1.5">
+                          <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest font-mono block">Vault ID (66-Character bytes32 Hash)</label>
+                          <div className="flex gap-2">
+                            <input 
+                              type="text" 
+                              placeholder="0x..."
+                              value={inspectVaultId}
+                              onChange={(e) => setInspectVaultId(e.target.value)}
+                              className="flex-1 design-input px-4 py-3 text-xs font-mono"
+                            />
+                            <button 
+                              type="submit"
+                              disabled={isInspectLoading || !inspectVaultId.trim()}
+                              className="px-6 bg-gradient-to-r from-[#e5c483] to-[#c5a880] text-gray-950 font-bold rounded-xl text-xs flex items-center justify-center space-x-1.5 transition-all hover:opacity-90 active:scale-95 disabled:opacity-50 disabled:scale-100 cursor-pointer"
+                            >
+                              {isInspectLoading ? (
+                                <RefreshCw className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <>
+                                  <Eye className="w-4 h-4" />
+                                  <span>Query</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      </form>
+
+                      {inspectError && (
+                        <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-center space-x-2.5 text-xs text-red-400 font-mono">
+                          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                          <span>{inspectError}</span>
+                        </div>
+                      )}
+
+                      {inspectedVault && (
+                        <motion.div 
+                          initial={{ opacity: 0, scale: 0.98 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          className="pt-4 border-t border-gray-900 space-y-4"
+                        >
+                          <div className="flex items-center justify-between">
+                            <h4 className="text-xs font-bold text-white uppercase tracking-wider font-mono">On-Chain Records</h4>
+                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                              inspectedVault.status === "ACTIVE" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
+                              inspectedVault.status === "PENDING_UNLOCK" ? "bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse" :
+                              "bg-red-500/10 text-red-400 border border-red-500/20"
+                            }`}>
+                              ● Status: {inspectedVault.status}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px] font-mono">
+                            {/* Owner */}
+                            <div className="p-3 bg-gray-950/40 border border-gray-900 rounded-xl space-y-1">
+                              <span className="text-[9px] text-gray-500 uppercase block">Owner Address</span>
+                              <span className="text-gray-300 break-all">{inspectedVault.owner}</span>
+                            </div>
+
+                            {/* Recipient */}
+                            <div className="p-3 bg-gray-950/40 border border-gray-900 rounded-xl space-y-1">
+                              <span className="text-[9px] text-gray-500 uppercase block">Recipient Address</span>
+                              <span className="text-gray-300 break-all">{inspectedVault.recipient}</span>
+                            </div>
+
+                            {/* Inactivity period */}
+                            <div className="p-3 bg-gray-950/40 border border-gray-900 rounded-xl space-y-1">
+                              <span className="text-[9px] text-gray-500 uppercase block">Inactivity Period</span>
+                              <span className="text-gray-300">{inspectedVault.inactivityPeriod} seconds</span>
+                            </div>
+
+                            {/* Grace period */}
+                            <div className="p-3 bg-gray-950/40 border border-gray-900 rounded-xl space-y-1">
+                              <span className="text-[9px] text-gray-500 uppercase block">Veto Grace Period</span>
+                              <span className="text-gray-300">{inspectedVault.gracePeriod} seconds</span>
+                            </div>
+
+                            {/* Last Heartbeat */}
+                            <div className="p-3 bg-gray-950/40 border border-gray-900 rounded-xl space-y-1 md:col-span-2">
+                              <span className="text-[9px] text-gray-500 uppercase block">Last Recorded Heartbeat</span>
+                              <div className="flex justify-between items-center text-gray-300">
+                                <span>{new Date(inspectedVault.lastHeartbeat).toLocaleString()}</span>
+                                <span className="text-gray-500 text-[10px]">
+                                  {Math.floor((Date.now() - inspectedVault.lastHeartbeat) / 1000)}s elapsed
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* IPFS Hash */}
+                            <div className="p-3 bg-gray-950/40 border border-gray-900 rounded-xl space-y-1 md:col-span-2">
+                              <span className="text-[9px] text-gray-500 uppercase block">IPFS Gateway Link (Ciphertext)</span>
+                              <a 
+                                href={`https://gateway.pinata.cloud/ipfs/${inspectedVault.ipfsHash.replace("ipfs://", "")}`}
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="text-[#e5c483] hover:underline break-all block"
+                              >
+                                {inspectedVault.ipfsHash} ↗
+                              </a>
+                            </div>
+                          </div>
+
+                          <div className="pt-2 flex gap-3">
+                            <button
+                              onClick={() => {
+                                setClaimVaultAddress(inspectedVault.id);
+                                setActiveTab("recipient");
+                              }}
+                              className="flex-1 py-2.5 bg-gray-900 border border-gray-800 text-[#faf6ee] hover:text-[#e5c483] rounded-xl text-xs font-bold font-mono transition-all cursor-pointer text-center"
+                            >
+                              Go to Claim Portal →
+                            </button>
+                          </div>
+                        </motion.div>
+                      )}
+                    </div>
                   </motion.div>
                 )}
 
