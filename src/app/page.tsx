@@ -178,6 +178,8 @@ export default function LastWishApp() {
             newStatus = "ACTIVE";
           }
           
+          console.log(`[Timer] Vault: ${vault.name}, ID: ${vault.id}, Status: ${vault.status} -> ${newStatus}, lastHeartbeat: ${vault.lastHeartbeat}, elapsed: ${elapsed}s, inactivityLimit: ${inactivityLimit}s, graceLimit: ${graceLimit}s`);
+
           if (newStatus !== vault.status) {
             changed = true;
             return { ...vault, status: newStatus };
@@ -210,11 +212,14 @@ export default function LastWishApp() {
           return v;
         }
         try {
+          console.log(`[Sync] Querying blockchain for Vault ID: ${v.id}...`);
           const details = await contract.getVaultDetails(v.id);
           const statusMap: ("ACTIVE" | "PENDING_UNLOCK" | "UNLOCKED")[] = ["ACTIVE", "PENDING_UNLOCK", "UNLOCKED"];
           const newHeartbeat = Number(details.lastHeartbeat) * 1000;
           const newStatus = statusMap[Number(details.status)] || v.status;
           
+          console.log(`[Sync] Success for Vault ID: ${v.id}. onChainHeartbeat: ${Number(details.lastHeartbeat) * 1000} (ms), onChainStatus: ${newStatus}`);
+
           if (v.lastHeartbeat !== newHeartbeat || v.status !== newStatus) {
             changed = true;
           }
@@ -223,7 +228,8 @@ export default function LastWishApp() {
             lastHeartbeat: newHeartbeat,
             status: newStatus
           };
-        } catch (e) {
+        } catch (e: any) {
+          console.log(`[Sync] Failed/Reverted for Vault ID: ${v.id}. Error: ${e.message}`);
           return v;
         }
       }));
@@ -383,6 +389,15 @@ export default function LastWishApp() {
         spread: 50,
         colors: ["#e5c483", "#faf6ee"]
       });
+    }
+  };
+
+  // Delete Vault from Local Storage
+  const deleteVault = (vaultId: string) => {
+    if (confirm("Are you sure you want to remove this vault from your local dashboard? (On-chain data will not be deleted)")) {
+      const updated = vaults.filter(v => v.id !== vaultId);
+      setVaults(updated);
+      localStorage.setItem("lastwish_vaults", JSON.stringify(updated));
     }
   };
 
@@ -872,7 +887,7 @@ export default function LastWishApp() {
                                       {v.status === "ACTIVE" && (
                                         <button
                                           onClick={() => triggerHeartbeat(v.id)}
-                                          className="px-3 py-1 bg-gray-900 hover:border-[#e5c483]/30 border border-gray-800 text-[#e5c483] rounded-lg text-[10px]"
+                                          className="px-3 py-1 bg-gray-900 hover:border-[#e5c483]/30 border border-gray-800 text-[#e5c483] rounded-lg text-[10px] cursor-pointer"
                                         >
                                           Sign
                                         </button>
@@ -880,11 +895,18 @@ export default function LastWishApp() {
                                       {v.status === "PENDING_UNLOCK" && (
                                         <button
                                           onClick={() => triggerVeto(v.id)}
-                                          className="px-3 py-1 bg-amber-500 text-gray-950 font-bold rounded-lg text-[10px]"
+                                          className="px-3 py-1 bg-amber-500 text-gray-950 font-bold rounded-lg text-[10px] cursor-pointer"
                                         >
                                           Veto
                                         </button>
                                       )}
+                                      <button
+                                        onClick={() => deleteVault(v.id)}
+                                        className="p-1.5 hover:bg-red-500/10 text-red-400 hover:text-red-300 rounded-lg transition-colors cursor-pointer"
+                                        title="Delete Vault"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
                                     </div>
                                   </div>
                                 );
