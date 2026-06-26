@@ -61,6 +61,32 @@ body {
   animation: float 14s infinite ease-in-out;
 }
 
+/* Slow floating animation for vault logos */
+@keyframes float-slow {
+  0%, 100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-10px) rotate(1deg);
+  }
+}
+.animate-float-slow {
+  animation: float-slow 7s infinite ease-in-out;
+}
+
+/* Floating animation for headings */
+@keyframes float-text {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+.animate-float-text {
+  animation: float-text 6s infinite ease-in-out;
+}
+
 /* Perspective Grid Scroll Animation (from landing page mockup) */
 .perspective-container {
   perspective: 300px;

@@ -703,7 +703,25 @@ export default function LastWishApp() {
               className="w-full flex flex-col items-center justify-between min-h-[70vh] py-12 text-center relative"
             >
               <div className="max-w-3xl space-y-6 my-auto">
-                <h1 className="text-4xl md:text-6xl font-black tracking-tight leading-none text-[#faf6ee]">
+                {/* Floating Vault Animation Container */}
+                <div className="flex justify-center mb-4 relative">
+                  {/* Glowing background aura */}
+                  <div className="absolute w-24 h-24 rounded-full bg-[#e5c483]/10 blur-xl animate-pulse" />
+                  
+                  {/* Floating Vault Emblem */}
+                  <div className="relative p-6 bg-gray-950/65 border border-[rgba(229,196,131,0.15)] rounded-2xl animate-float-slow shadow-2xl shadow-[#e5c483]/2 flex items-center justify-center group cursor-pointer hover:border-[#e5c483]/40 transition-all duration-500">
+                    {/* Ring border effect */}
+                    <div className="absolute inset-0 rounded-2xl border border-dashed border-[#e5c483]/20 animate-[spin_40s_linear_infinite] group-hover:border-[#e5c483]/40" />
+                    
+                    {/* Vault Icons */}
+                    <div className="relative w-10 h-10">
+                      <Lock className="w-10 h-10 text-[#e5c483] absolute inset-0 group-hover:scale-90 group-hover:opacity-0 transition-all duration-300" />
+                      <Unlock className="w-10 h-10 text-[#faf6ee] absolute inset-0 scale-75 opacity-0 group-hover:scale-100 group-hover:opacity-100 transition-all duration-300" />
+                    </div>
+                  </div>
+                </div>
+
+                <h1 className="text-4xl md:text-6xl font-black tracking-tight leading-none text-[#faf6ee] animate-float-text">
                   Your Digital Legacy.<br />
                   Secured Beyond Time.
                 </h1>
