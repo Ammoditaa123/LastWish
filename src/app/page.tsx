@@ -502,31 +502,41 @@ export default function LastWishApp() {
     setDecryptionError(null);
     setDecryptionResult(null);
 
-    const targetVault = vaults.find(v => v.id.toLowerCase().includes(claimVaultAddress.toLowerCase()) || claimVaultAddress.toLowerCase().includes(v.id.toLowerCase()));
+    const cleanAddress = claimVaultAddress.trim();
+    let share1ToUse = "";
+    let payloadToUse: EncryptedPayload | null = null;
+    let isOnChain = false;
 
-    if (!targetVault) {
-      setDecryptionError("Vault not found. Please check the Vault ID.");
+    if (cleanAddress.startsWith("0x") && cleanAddress.length === 66 && isConnected && !userAddress.startsWith("0x6ab162")) {
+      isOnChain = true;
+    }
+
+    const targetVault = vaults.find(v => v.id.toLowerCase().includes(cleanAddress.toLowerCase()) || cleanAddress.toLowerCase().includes(v.id.toLowerCase()));
+
+    if (!targetVault && !isOnChain) {
+      setDecryptionError("Vault not found. For local/simulation vaults, you must be on the same device. For live on-chain vaults, make sure you enter the correct 66-character Vault ID.");
       return;
     }
 
-    // Let's check if the vault is on-chain and retrieve Share 1 from the contract!
-    let share1ToUse = targetVault.share1;
-    let payloadToUse = targetVault.payload;
+    if (targetVault) {
+      share1ToUse = targetVault.share1;
+      payloadToUse = targetVault.payload;
+    }
     
     setIsDecrypting(true);
     await new Promise(resolve => setTimeout(resolve, 1200));
 
     try {
-      if (isConnected && !userAddress.startsWith("0x6ab162") && targetVault.id.startsWith("0x") && targetVault.id.length === 66) {
+      if (isOnChain) {
         try {
           const contract = await getVaultContract(contractAddress);
           
           // 1. Fetch on-chain Share 1
-          const onChainShare1 = await contract.claimVaultShare(targetVault.id);
+          const onChainShare1 = await contract.claimVaultShare(cleanAddress);
           share1ToUse = onChainShare1;
 
           // 2. Fetch on-chain details to get IPFS CID
-          const details = await contract.getVaultDetails(targetVault.id);
+          const details = await contract.getVaultDetails(cleanAddress);
           const ipfsUri = details.ipfsHash; // e.g. "ipfs://Qm..."
 
           // 3. Download encrypted payload from IPFS
@@ -537,13 +547,17 @@ export default function LastWishApp() {
         }
       } else {
         // If in simulation, let's verify if the status is unlocked
-        if (targetVault.status !== "UNLOCKED") {
+        if (targetVault && targetVault.status !== "UNLOCKED") {
           throw new Error(`Vault is currently locked. Status: ${targetVault.status}. The inactivity period must fully expire.`);
         }
       }
 
       if (!recipientShareInput.trim()) {
         throw new Error("Please input your Key Share (Share 2).");
+      }
+
+      if (!payloadToUse) {
+        throw new Error("Encrypted payload data not found.");
       }
 
       const sharesToUse = [share1ToUse, recipientShareInput.trim()];
