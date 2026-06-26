@@ -46,42 +46,7 @@ interface Vault {
 }
 
 // Initial Mock Seed Data
-const INITIAL_VAULTS: Vault[] = [
-  {
-    id: "0x8a92f012b3c7...",
-    name: "Legacy Wallet Backup & Credentials",
-    recipientAddress: "0x3b1c28f9d0c2b2a9e8f572a188f572c188f572c1",
-    inactivityPeriod: 90,
-    gracePeriod: 10,
-    createdAt: Date.now() - 40000,
-    lastHeartbeat: Date.now() - 40000,
-    payload: {
-      iv: "YmFzZTY0X2l2X2RlbW8=",
-      data: "YmFzZTY0X2NpcGhlcnRleHRfZGVtb19kYXRhX2hlcmU="
-    },
-    share1: "1-ab73cd28fa90be72",
-    share2: "2-ef84ab29fe02de11",
-    share3: "3-83dd72ef9a02bc88",
-    status: "ACTIVE"
-  },
-  {
-    id: "0xfb78a9c2d1b8...",
-    name: "A Letter to My Family",
-    recipientAddress: "0xfa2d8811b3c7f901a8ef572a188f572c188f572c",
-    inactivityPeriod: 180,
-    gracePeriod: 20,
-    createdAt: Date.now() - 100000,
-    lastHeartbeat: Date.now() - 100000,
-    payload: {
-      iv: "YmFzZTY0X2l2X2RlbW8y",
-      data: "YmFzZTY0X2NpcGhlcnRleHRfZGVtb19kYXRhX2hlcmUy"
-    },
-    share1: "1-1122334455667788",
-    share2: "2-9988776655443322",
-    share3: "3-aabbccddeeff0011",
-    status: "ACTIVE"
-  }
-];
+const INITIAL_VAULTS: Vault[] = [];
 
 // Twinkling Star/Particle Component
 interface StarProps {
