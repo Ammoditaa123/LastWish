@@ -57,14 +57,14 @@ export async function uploadToIPFS(payload: EncryptedPayload, vaultName: string 
  * Falls back to local simulation if the simulated CID is detected.
  */
 export async function downloadFromIPFS(cid: string): Promise<EncryptedPayload> {
+  // Remove custom prefixes (e.g. "ipfs://")
+  const cleanCid = cid.replace("ipfs://", "").trim();
+
   // If simulated CID exists in localStorage, return it
-  const simulated = localStorage.getItem(`ipfs_sim_${cid}`);
+  const simulated = localStorage.getItem(`ipfs_sim_${cleanCid}`);
   if (simulated) {
     return JSON.parse(simulated);
   }
-
-  // Remove custom prefixes (e.g. "ipfs://")
-  const cleanCid = cid.replace("ipfs://", "").trim();
 
   // Try server-side proxy first to bypass browser CORS / rate limits
   if (typeof window !== "undefined") {
