@@ -425,6 +425,67 @@ export default function LastWishApp() {
     }
   };
 
+  const triggerGlobalHeartbeat = async () => {
+    const ownerVaults = vaults.filter(v => !isConnected || !userAddress || v.ownerAddress.toLowerCase() === userAddress.toLowerCase());
+    if (ownerVaults.length === 0) {
+      alert("No vaults found to send a heartbeat.");
+      return;
+    }
+
+    let successCount = 0;
+    let failCount = 0;
+    let currentVaults = [...vaults];
+
+    for (const v of ownerVaults) {
+      let success = false;
+      if (isConnected && !userAddress.startsWith("0x6ab162") && v.id.startsWith("0x") && v.id.length === 66) {
+        try {
+          const contract = await getVaultContract(contractAddress);
+          const tx = await contract.heartbeat(v.id);
+          await tx.wait();
+          success = true;
+        } catch (err: any) {
+          console.error(`On-chain heartbeat failed for vault ${v.id}:`, err);
+          failCount++;
+        }
+      } else {
+        success = true; // sandbox simulation
+      }
+
+      if (success) {
+        currentVaults = currentVaults.map(vaultItem => {
+          if (vaultItem.id === v.id) {
+            const updatedConfigs = vaultItem.configs.map(cfg => ({ ...cfg, status: "ACTIVE" as const }));
+            return {
+              ...vaultItem,
+              lastHeartbeat: Date.now(),
+              configs: updatedConfigs
+            };
+          }
+          return vaultItem;
+        });
+        successCount++;
+      }
+    }
+
+    setVaults(currentVaults);
+    localStorage.setItem("lastwish_vaults_v2", JSON.stringify(currentVaults));
+
+    if (successCount > 0) {
+      canvasConfetti({
+        particleCount: 80,
+        spread: 60,
+        colors: ["#faf6ee", "#e5c483", "#2ECC71"]
+      });
+    }
+
+    if (failCount === 0) {
+      alert(`Successfully sent global heartbeat check-in for all ${successCount} vault(s).`);
+    } else {
+      alert(`Global heartbeat completed: ${successCount} successful, ${failCount} failed.`);
+    }
+  };
+
   // Trigger Veto
   const triggerVeto = async (vaultId: string) => {
     let success = false;
@@ -1613,7 +1674,7 @@ export default function LastWishApp() {
                         {/* Welcome back Keeper */}
                         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-2">
                           <div>
-                            <h2 className="text-3xl font-extrabold text-[#faf6ee] tracking-tight leading-tight">Welcome back, Legacy Keeper 👋</h2>
+                            <h2 className="text-3xl font-extrabold text-[#faf6ee] tracking-tight leading-tight">Welcome back 👋</h2>
                             <p className="text-xs text-gray-400 font-mono mt-1">Manage your encrypted digital legacy securely.</p>
                           </div>
                           <div className="flex items-center space-x-2 bg-[#111827]/60 border border-white/5 px-4 py-2 rounded-full font-mono text-[10px] text-[#2ECC71]">
@@ -1680,58 +1741,20 @@ export default function LastWishApp() {
                           </div>
 
                           {/* Quick Actions Card */}
-                          <div className="xl:col-span-1 glass-panel p-5 rounded-2xl border border-white/5 space-y-3 cursor-default">
-                            <span className="text-[10px] text-[#E6BE72] font-mono uppercase block font-bold tracking-wider">⚡ Quick Actions</span>
-                            <div className="grid grid-cols-2 gap-2 text-[10px] font-mono font-bold">
-                              <button 
-                                onClick={() => { setIsWizardActive(true); setStep(1); }}
-                                className="p-2.5 bg-[#111827]/80 hover:bg-[#E6BE72]/10 border border-white/5 hover:border-[#E6BE72]/30 text-gray-300 hover:text-white rounded-xl transition-all cursor-pointer text-left flex items-center space-x-1.5"
-                              >
-                                <span>➕</span>
-                                <span>Create Vault</span>
-                              </button>
-                              <button 
-                                onClick={() => setActiveTab("inspector")}
-                                className="p-2.5 bg-[#111827]/80 hover:bg-[#E6BE72]/10 border border-white/5 hover:border-[#E6BE72]/30 text-gray-300 hover:text-white rounded-xl transition-all cursor-pointer text-left flex items-center space-x-1.5"
-                              >
-                                <span>🔍</span>
-                                <span>Inspect Vault</span>
-                              </button>
-                              <button 
-                                onClick={() => { setIsWizardActive(true); setStep(3); }}
-                                className="p-2.5 bg-[#111827]/80 hover:bg-[#E6BE72]/10 border border-white/5 hover:border-[#E6BE72]/30 text-gray-300 hover:text-white rounded-xl transition-all cursor-pointer text-left flex items-center space-x-1.5"
-                              >
-                                <span>📤</span>
-                                <span>Upload Binary</span>
-                              </button>
-                              <button 
-                                onClick={() => { setIsWizardActive(true); setStep(2); }}
-                                className="p-2.5 bg-[#111827]/80 hover:bg-[#E6BE72]/10 border border-white/5 hover:border-[#E6BE72]/30 text-gray-300 hover:text-white rounded-xl transition-all cursor-pointer text-left flex items-center space-x-1.5"
-                              >
-                                <span>👥</span>
-                                <span>Add Recipient</span>
-                              </button>
-                              <button 
-                                onClick={() => {
-                                  if (vaults.length > 0) {
-                                    triggerHeartbeat(vaults[0].id);
-                                  } else {
-                                    alert("No vaults available to send heartbeat.");
-                                  }
-                                }}
-                                className="p-2.5 bg-[#111827]/80 hover:bg-[#E6BE72]/10 border border-white/5 hover:border-[#E6BE72]/30 text-gray-300 hover:text-white rounded-xl transition-all cursor-pointer text-left flex items-center space-x-1.5"
-                              >
-                                <span>💓</span>
-                                <span>Heartbeat</span>
-                              </button>
-                              <button 
-                                onClick={() => setActiveTab("recipient")}
-                                className="p-2.5 bg-[#111827]/80 hover:bg-[#E6BE72]/10 border border-white/5 hover:border-[#E6BE72]/30 text-gray-300 hover:text-white rounded-xl transition-all cursor-pointer text-left flex items-center space-x-1.5"
-                              >
-                                <span>🛡️</span>
-                                <span>Recover Vault</span>
-                              </button>
+                          <div className="xl:col-span-1 glass-panel p-5 rounded-2xl border border-white/5 space-y-4 cursor-default flex flex-col justify-between">
+                            <div>
+                              <span className="text-[10px] text-[#E6BE72] font-mono uppercase block font-bold tracking-wider">⚡ Quick Actions</span>
+                              <p className="text-[10px] text-gray-400 font-mono mt-1.5 leading-relaxed">
+                                Broadcast a network-wide proof-of-life heartbeat signal to keep all of your active capsules secure.
+                              </p>
                             </div>
+                            <button 
+                              onClick={triggerGlobalHeartbeat}
+                              className="w-full py-3.5 bg-gradient-to-r from-[#E6BE72] to-[#c5a880] text-gray-950 hover:scale-[1.01] active:scale-[0.99] font-bold rounded-xl transition-all cursor-pointer text-center flex items-center justify-center space-x-2 border-0 font-mono text-[11px] shadow-lg shadow-[#E6BE72]/5"
+                            >
+                              <span>💓</span>
+                              <span>Send Global Heartbeat</span>
+                            </button>
                           </div>
                         </div>
 
@@ -2490,36 +2513,7 @@ export default function LastWishApp() {
                             </div>
                           </div>
 
-                          <div className="space-y-1.5">
-                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block flex justify-between">
-                              <span>Manual Ciphertext (Optional Fallback)</span>
-                              <span className="text-[8px] text-gray-500 font-normal">Use if IPFS fails</span>
-                            </label>
-                            <div className="flex gap-2 items-start">
-                              <textarea 
-                                placeholder='Paste raw encrypted payload JSON: {"ciphertext":"...","iv":"...","salt":"..."}'
-                                value={manualPayloadInput}
-                                onChange={(e) => setManualPayloadInput(e.target.value)}
-                                rows={3}
-                                className="flex-1 design-input px-4 py-3 text-xs resize-none"
-                              />
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  try {
-                                    const text = await navigator.clipboard.readText();
-                                    setManualPayloadInput(text.trim());
-                                  } catch (err) {
-                                    console.error("Failed to read clipboard:", err);
-                                  }
-                                }}
-                                className="px-4 py-4.5 bg-gray-950 border border-gray-900 text-gray-400 hover:text-white rounded-xl text-xs flex items-center justify-center space-x-1 transition-all cursor-pointer self-stretch border-0"
-                                title="Paste JSON payload from clipboard"
-                              >
-                                <span>Paste</span>
-                              </button>
-                            </div>
-                          </div>
+
 
                           <button 
                             type="submit"
