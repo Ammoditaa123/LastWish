@@ -1,18 +1,17 @@
 @import "tailwindcss";
 
 :root {
-  /* Luxury Gold, Navy, Cream, and Beige Palette */
-  --background: #0d0f19; /* Deep space navy background */
-  --foreground: #faf6ee; /* Cream text */
+  --background: #090B14;
+  --foreground: #faf6ee;
   
-  --color-navy: #0d0f19;
-  --color-cream: #faf6ee;
-  --color-gold: #e5c483;  /* Soft Gold */
-  --color-beige: #ddb892; /* Beige */
+  --secondary-bg: #111827;
+  --card-bg: rgba(18, 22, 36, 0.65);
+  --card-border: rgba(255, 255, 255, 0.08);
   
-  --card-bg: rgba(13, 17, 30, 0.7); /* Slightly darker navy glass card */
-  --card-border: rgba(229, 196, 131, 0.1); /* Gold tint */
-  --glow-color: rgba(229, 196, 131, 0.05);
+  --accent-gold: #E6BE72;
+  --accent-purple: #2563EB; /* Electric Navy Blue */
+  --accent-emerald: #2ECC71;
+  --accent-red: #FF5A5F;
 }
 
 @theme inline {
@@ -126,54 +125,56 @@ body {
 
 /* Glassmorphism Panels matching the layout mockup */
 .glass-panel {
-  background: linear-gradient(135deg, rgba(20, 24, 40, 0.75) 0%, rgba(13, 17, 30, 0.65) 100%);
-  border: 1px solid rgba(229, 196, 131, 0.09);
-  backdrop-filter: blur(24px) saturate(130%);
-  -webkit-backdrop-filter: blur(24px) saturate(130%);
+  background: rgba(18, 22, 36, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(24px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
   box-shadow: 
-    0 10px 40px 0 rgba(0, 0, 0, 0.6),
-    inset 0 1px 1px rgba(255, 255, 255, 0.03);
-  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    0 10px 40px 0 rgba(0, 0, 0, 0.65),
+    inset 0 1px 1px rgba(255, 255, 255, 0.02);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .glass-panel:hover {
-  border-color: rgba(229, 196, 131, 0.22);
+  border-color: rgba(230, 190, 114, 0.25);
   box-shadow: 
-    0 15px 50px 0 rgba(229, 196, 131, 0.06),
-    inset 0 1px 2px rgba(255, 255, 255, 0.05);
-  transform: translateY(-2px);
+    0 15px 50px 0 rgba(124, 92, 255, 0.05),
+    0 0 20px 0 rgba(230, 190, 114, 0.04),
+    inset 0 1px 2px rgba(255, 255, 255, 0.04);
+  transform: translateY(-6px);
 }
 
 /* Form Input fields from design layout */
 .design-input {
-  background: #151824;
-  border: 1px solid rgba(229, 196, 131, 0.12);
-  border-radius: 12px;
+  background: rgba(9, 11, 20, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
   color: #faf6ee;
   transition: all 0.2s ease;
-  font-family: var(--font-mono), monospace;
+  font-family: var(--font-sans), sans-serif;
 }
 
 .design-input:focus {
-  border-color: #e5c483;
-  box-shadow: 0 0 0 2px rgba(229, 196, 131, 0.1);
+  border-color: #E6BE72;
+  box-shadow: 0 0 12px rgba(230, 190, 114, 0.15);
   outline: none;
 }
 
-/* Premium Outlined Actions (the green buttons from mockup) */
+/* Premium Outlined Actions */
 .outlined-action {
-  border: 1px solid rgba(16, 185, 129, 0.4);
-  background: rgba(16, 185, 129, 0.02);
-  color: #10b981;
+  border: 1px solid rgba(230, 190, 114, 0.35);
+  background: rgba(18, 22, 36, 0.5);
+  color: #E6BE72;
   transition: all 0.25s ease;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
   font-family: var(--font-mono), monospace;
 }
 
 .outlined-action:hover:not(:disabled) {
-  background: rgba(16, 185, 129, 0.1);
-  border-color: #10b981;
-  box-shadow: 0 0 15px rgba(16, 185, 129, 0.2);
+  background: rgba(230, 190, 114, 0.1);
+  border-color: #E6BE72;
+  box-shadow: 0 0 15px rgba(230, 190, 114, 0.25);
+  transform: scale(1.03);
   cursor: pointer;
 }
 
@@ -184,14 +185,157 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #0d0f19;
+  background: #090B14;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(229, 196, 131, 0.1);
+  background: rgba(255, 255, 255, 0.08);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(229, 196, 131, 0.2);
+  background: rgba(230, 190, 114, 0.2);
 }
+
+/* =========================================================================
+   Premium Hero Vault Experience Animations
+   ========================================================================= */
+
+/* 2D Orbital Ring Rotation */
+@keyframes spin-clockwise {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes spin-counter-clockwise {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(-360deg); }
+}
+
+.animate-orbit-cw {
+  animation: spin-clockwise 45s linear infinite;
+}
+
+.animate-orbit-ccw {
+  animation: spin-counter-clockwise 45s linear infinite;
+}
+
+/* 3D Orbiting Blockchain Blocks */
+.orbit-container {
+  perspective: 600px;
+  transform-style: preserve-3d;
+}
+
+.orbiting-block {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  background: rgba(230, 190, 114, 0.15);
+  border: 1px solid rgba(230, 190, 114, 0.35);
+  border-radius: 6px;
+  box-shadow: 0 0 10px rgba(230, 190, 114, 0.15);
+  backdrop-filter: blur(4px);
+}
+
+.block-1 {
+  animation: orbit1 8s linear infinite;
+}
+
+.block-2 {
+  animation: orbit2 8s linear infinite;
+}
+
+.block-3 {
+  animation: orbit3 8s linear infinite;
+}
+
+@keyframes orbit1 {
+  0% { transform: rotateY(0deg) translateZ(120px) rotateX(20deg); }
+  100% { transform: rotateY(360deg) translateZ(120px) rotateX(20deg); }
+}
+
+@keyframes orbit2 {
+  0% { transform: rotateY(120deg) translateZ(120px) rotateX(-15deg); }
+  100% { transform: rotateY(480deg) translateZ(120px) rotateX(-15deg); }
+}
+
+@keyframes orbit3 {
+  0% { transform: rotateY(240deg) translateZ(120px) rotateX(5deg); }
+  100% { transform: rotateY(600deg) translateZ(120px) rotateX(5deg); }
+}
+
+/* Pulsing Heartbeat Path Animation */
+.heartbeat-path {
+  stroke-dasharray: 400;
+  stroke-dashoffset: 400;
+  animation: draw-pulse 3s linear infinite;
+}
+
+@keyframes draw-pulse {
+  0% { stroke-dashoffset: 400; }
+  40% { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: -400; }
+}
+
+/* Floating Code Particles */
+@keyframes float-up {
+  0% {
+    transform: translateY(20px) scale(0.8);
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.7;
+  }
+  80% {
+    opacity: 0.4;
+  }
+  100% {
+    transform: translateY(-80px) scale(1.1);
+    opacity: 0;
+  }
+}
+
+.animate-float-up {
+  animation: float-up 4s infinite linear;
+}
+
+/* Primary CTA glow hover effect */
+.cta-primary-glow {
+  position: relative;
+  overflow: hidden;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.cta-primary-glow::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  background: radial-gradient(circle at var(--x, 50%) var(--y, 50%), rgba(230, 190, 114, 0.25) 0%, transparent 60%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.cta-primary-glow:hover::after {
+  opacity: 1;
+}
+
+/* Stats Card Glow Elements */
+.glow-purple:hover {
+  box-shadow: 0 15px 40px 0 rgba(37, 99, 235, 0.15);
+  border-color: rgba(37, 99, 235, 0.3);
+}
+.glow-blue:hover {
+  box-shadow: 0 15px 40px 0 rgba(46, 204, 113, 0.15);
+  border-color: rgba(46, 204, 113, 0.3);
+}
+.glow-gold:hover {
+  box-shadow: 0 15px 40px 0 rgba(230, 190, 114, 0.15);
+  border-color: rgba(230, 190, 114, 0.3);
+}
+.glow-green:hover {
+  box-shadow: 0 15px 40px 0 rgba(46, 204, 113, 0.15);
+  border-color: rgba(46, 204, 113, 0.3);
+}
+

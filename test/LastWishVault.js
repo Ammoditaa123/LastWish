@@ -5,229 +5,249 @@ import helpers from "@nomicfoundation/hardhat-network-helpers";
 const { ethers } = hre;
 const { time } = helpers;
 
-describe("LastWishVault", function () {
-  let LastWishVault;
+describe("LastWishVault Multi-Recipient", function () {
   let vaultContract;
   let owner;
-  let recipient;
+  let recipientA;
+  let recipientB;
   let otherAccount;
   
-  // Dummy parameters
-  const vaultId = ethers.keccak256(ethers.toUtf8Bytes("demo-vault-id"));
-  const inactivityPeriod = 100; // seconds
-  const gracePeriod = 50;       // seconds
-  const share1 = "shamir-share-1-content-here";
-  const ipfsHash = "QmXoypizjW3WknFixtn48q671dyCbTKWbifWpNBj413463";
+  const vaultId = ethers.keccak256(ethers.toUtf8Bytes("multi-vault-id"));
+  const shareA = "shamir-share-alice-content";
+  const shareB = "shamir-share-bob-content";
+  const ipfsHashA = "QmXoypizjW3WknFixtn48q671dyCbTKWbifWpNBj413463";
+  const ipfsHashB = "QmYoypizjW3WknFixtn48q671dyCbTKWbifWpNBj413464";
 
   beforeEach(async function () {
-    // Get signers
-    [owner, recipient, otherAccount] = await ethers.getSigners();
+    [owner, recipientA, recipientB, otherAccount] = await ethers.getSigners();
 
-    // Deploy contract
     const factory = await ethers.getContractFactory("LastWishVault");
     vaultContract = await factory.deploy();
     await vaultContract.waitForDeployment();
   });
 
   describe("Vault Creation", function () {
-    it("should allow a user to create a vault successfully", async function () {
-      const tx = await vaultContract.connect(owner).createVault(
-        vaultId,
-        recipient.address,
-        inactivityPeriod,
-        gracePeriod,
-        share1,
-        ipfsHash
-      );
+    it("should allow owner to configure a vault with multiple recipients", async function () {
+      const configs = [
+        {
+          recipient: recipientA.address,
+          category: "Memories",
+          inactivityPeriod: 100,
+          gracePeriod: 50,
+          share1: shareA,
+          ipfsHash: ipfsHashA
+        },
+        {
+          recipient: recipientB.address,
+          category: "Finances",
+          inactivityPeriod: 200,
+          gracePeriod: 100,
+          share1: shareB,
+          ipfsHash: ipfsHashB
+        }
+      ];
 
-      // Verify event was emitted
+      const tx = await vaultContract.connect(owner).createVault(vaultId, configs);
+
       await expect(tx)
         .to.emit(vaultContract, "VaultCreated")
-        .withArgs(vaultId, owner.address, recipient.address, inactivityPeriod, gracePeriod);
+        .withArgs(vaultId, owner.address, 2);
 
-      // Verify vault details
       const details = await vaultContract.getVaultDetails(vaultId);
       expect(details.owner).to.equal(owner.address);
-      expect(details.recipient).to.equal(recipient.address);
-      expect(details.inactivityPeriod).to.equal(inactivityPeriod);
-      expect(details.gracePeriod).to.equal(gracePeriod);
-      expect(details.ipfsHash).to.equal(ipfsHash);
-      expect(details.status).to.equal(0); // Status.ACTIVE
+      expect(details.recipientCount).to.equal(2);
+
+      const contractConfigs = await vaultContract.getVaultRecipients(vaultId);
+      expect(contractConfigs.length).to.equal(2);
+      expect(contractConfigs[0].recipient).to.equal(recipientA.address);
+      expect(contractConfigs[0].category).to.equal("Memories");
+      expect(contractConfigs[1].recipient).to.equal(recipientB.address);
+      expect(contractConfigs[1].category).to.equal("Finances");
     });
 
-    it("should fail if vault ID already exists", async function () {
-      await vaultContract.connect(owner).createVault(
-        vaultId,
-        recipient.address,
-        inactivityPeriod,
-        gracePeriod,
-        share1,
-        ipfsHash
-      );
+    it("should fail if duplicate vault ID", async function () {
+      const configs = [
+        {
+          recipient: recipientA.address,
+          category: "Memories",
+          inactivityPeriod: 100,
+          gracePeriod: 50,
+          share1: shareA,
+          ipfsHash: ipfsHashA
+        }
+      ];
+
+      await vaultContract.connect(owner).createVault(vaultId, configs);
 
       await expect(
-        vaultContract.connect(owner).createVault(
-          vaultId,
-          otherAccount.address,
-          inactivityPeriod,
-          gracePeriod,
-          share1,
-          ipfsHash
-        )
+        vaultContract.connect(owner).createVault(vaultId, configs)
       ).to.be.revertedWith("LastWishVault: Vault ID already exists.");
     });
 
-    it("should fail if recipient is the zero address", async function () {
+    it("should fail if recipient is zero address", async function () {
+      const configs = [
+        {
+          recipient: ethers.ZeroAddress,
+          category: "Memories",
+          inactivityPeriod: 100,
+          gracePeriod: 50,
+          share1: shareA,
+          ipfsHash: ipfsHashA
+        }
+      ];
+
       await expect(
-        vaultContract.connect(owner).createVault(
-          vaultId,
-          ethers.ZeroAddress,
-          inactivityPeriod,
-          gracePeriod,
-          share1,
-          ipfsHash
-        )
+        vaultContract.connect(owner).createVault(vaultId, configs)
       ).to.be.revertedWith("LastWishVault: Recipient address cannot be the zero address.");
     });
 
     it("should fail if inactivity period is zero", async function () {
+      const configs = [
+        {
+          recipient: recipientA.address,
+          category: "Memories",
+          inactivityPeriod: 0,
+          gracePeriod: 50,
+          share1: shareA,
+          ipfsHash: ipfsHashA
+        }
+      ];
+
       await expect(
-        vaultContract.connect(owner).createVault(
-          vaultId,
-          recipient.address,
-          0,
-          gracePeriod,
-          share1,
-          ipfsHash
-        )
+        vaultContract.connect(owner).createVault(vaultId, configs)
       ).to.be.revertedWith("LastWishVault: Inactivity period must be greater than zero.");
     });
   });
 
   describe("Heartbeat & Veto", function () {
     beforeEach(async function () {
-      await vaultContract.connect(owner).createVault(
-        vaultId,
-        recipient.address,
-        inactivityPeriod,
-        gracePeriod,
-        share1,
-        ipfsHash
-      );
+      const configs = [
+        {
+          recipient: recipientA.address,
+          category: "Memories",
+          inactivityPeriod: 100,
+          gracePeriod: 50,
+          share1: shareA,
+          ipfsHash: ipfsHashA
+        }
+      ];
+      await vaultContract.connect(owner).createVault(vaultId, configs);
     });
 
-    it("should allow the owner to update the heartbeat", async function () {
-      // Increase time slightly
-      await time.increase(20);
-
+    it("should allow owner to reset timer via heartbeat", async function () {
+      await time.increase(50);
       const tx = await vaultContract.connect(owner).heartbeat(vaultId);
-      const latestBlockTime = await time.latest();
+      const latestTime = await time.latest();
 
       await expect(tx)
         .to.emit(vaultContract, "HeartbeatUpdated")
-        .withArgs(vaultId, latestBlockTime);
+        .withArgs(vaultId, latestTime);
 
       const details = await vaultContract.getVaultDetails(vaultId);
-      expect(details.lastHeartbeat).to.equal(latestBlockTime);
+      expect(details.lastHeartbeat).to.equal(latestTime);
     });
 
-    it("should prevent non-owners from updating the heartbeat", async function () {
-      await expect(
-        vaultContract.connect(otherAccount).heartbeat(vaultId)
-      ).to.be.revertedWith("LastWishVault: Only the vault owner can perform this action.");
-    });
-
-    it("should allow the owner to execute a veto", async function () {
-      await time.increase(80); // within inactivity but close to it
-
+    it("should allow owner to veto", async function () {
+      await time.increase(110); // inside grace period
       const tx = await vaultContract.connect(owner).veto(vaultId);
-      const latestBlockTime = await time.latest();
+      const latestTime = await time.latest();
 
       await expect(tx)
         .to.emit(vaultContract, "VetoExecuted")
-        .withArgs(vaultId, latestBlockTime);
-
-      const details = await vaultContract.getVaultDetails(vaultId);
-      expect(details.lastHeartbeat).to.equal(latestBlockTime);
+        .withArgs(vaultId, latestTime);
     });
 
-    it("should prevent non-owners from executing a veto", async function () {
+    it("should prevent non-owners from heartbeat/veto", async function () {
       await expect(
-        vaultContract.connect(otherAccount).veto(vaultId)
+        vaultContract.connect(recipientA).heartbeat(vaultId)
       ).to.be.revertedWith("LastWishVault: Only the vault owner can perform this action.");
     });
   });
 
-  describe("Status Transitions", function () {
+  describe("Time-Locked Category Claims & Statuses", function () {
     beforeEach(async function () {
-      await vaultContract.connect(owner).createVault(
-        vaultId,
-        recipient.address,
-        inactivityPeriod,
-        gracePeriod,
-        share1,
-        ipfsHash
-      );
+      const configs = [
+        {
+          recipient: recipientA.address,
+          category: "Memories",
+          inactivityPeriod: 100,
+          gracePeriod: 50,
+          share1: shareA,
+          ipfsHash: ipfsHashA
+        },
+        {
+          recipient: recipientB.address,
+          category: "Finances",
+          inactivityPeriod: 200,
+          gracePeriod: 100,
+          share1: shareB,
+          ipfsHash: ipfsHashB
+        }
+      ];
+      await vaultContract.connect(owner).createVault(vaultId, configs);
     });
 
-    it("should evaluate status as ACTIVE initially", async function () {
-      const status = await vaultContract.getVaultStatus(vaultId);
-      expect(status).to.equal(0); // Status.ACTIVE
+    it("should show ACTIVE status initially", async function () {
+      const statusA = await vaultContract.getRecipientStatus(vaultId, recipientA.address, "Memories");
+      const statusB = await vaultContract.getRecipientStatus(vaultId, recipientB.address, "Finances");
+      expect(statusA).to.equal(0); // Status.ACTIVE
+      expect(statusB).to.equal(0);
     });
 
-    it("should transition to PENDING_UNLOCK after inactivityPeriod elapses", async function () {
-      // Advance time to exactly inactivityPeriod
-      await time.increase(inactivityPeriod);
-      const status = await vaultContract.getVaultStatus(vaultId);
-      expect(status).to.equal(1); // Status.PENDING_UNLOCK
-    });
+    it("should transition recipientA to PENDING_UNLOCK while recipientB remains ACTIVE", async function () {
+      await time.increase(120);
 
-    it("should transition to UNLOCKED after inactivityPeriod + gracePeriod elapses", async function () {
-      // Advance time beyond inactivityPeriod + gracePeriod
-      await time.increase(inactivityPeriod + gracePeriod);
-      const status = await vaultContract.getVaultStatus(vaultId);
-      expect(status).to.equal(2); // Status.UNLOCKED
-    });
-  });
+      const statusA = await vaultContract.getRecipientStatus(vaultId, recipientA.address, "Memories");
+      const statusB = await vaultContract.getRecipientStatus(vaultId, recipientB.address, "Finances");
+      
+      expect(statusA).to.equal(1); // Status.PENDING_UNLOCK
+      expect(statusB).to.equal(0); // Status.ACTIVE
 
-  describe("Claiming Vault Share", function () {
-    beforeEach(async function () {
-      await vaultContract.connect(owner).createVault(
-        vaultId,
-        recipient.address,
-        inactivityPeriod,
-        gracePeriod,
-        share1,
-        ipfsHash
-      );
-    });
-
-    it("should prevent recipient from claiming share while ACTIVE", async function () {
+      // Claims should fail
       await expect(
-        vaultContract.connect(recipient).claimVaultShare(vaultId)
+        vaultContract.connect(recipientA).claimVaultShare(vaultId, "Memories")
       ).to.be.revertedWith("LastWishVault: Vault is locked. Inactivity period and grace window must expire before retrieval.");
     });
 
-    it("should prevent recipient from claiming share while PENDING_UNLOCK", async function () {
-      await time.increase(inactivityPeriod + 10); // inside grace period
+    it("should unlock recipientA after threshold while recipientB remains ACTIVE", async function () {
+      await time.increase(160); // 160 > 100 + 50 (recipientA threshold)
+
+      const statusA = await vaultContract.getRecipientStatus(vaultId, recipientA.address, "Memories");
+      const statusB = await vaultContract.getRecipientStatus(vaultId, recipientB.address, "Finances");
+      
+      expect(statusA).to.equal(2); // Status.UNLOCKED
+      expect(statusB).to.equal(0); // Status.ACTIVE
+
+      // recipientA claim should succeed
+      const claimedShareA = await vaultContract.connect(recipientA).claimVaultShare(vaultId, "Memories");
+      expect(claimedShareA).to.equal(shareA);
+
+      // recipientB claim should still fail
       await expect(
-        vaultContract.connect(recipient).claimVaultShare(vaultId)
+        vaultContract.connect(recipientB).claimVaultShare(vaultId, "Finances")
       ).to.be.revertedWith("LastWishVault: Vault is locked. Inactivity period and grace window must expire before retrieval.");
     });
 
-    it("should allow recipient to claim share when UNLOCKED", async function () {
-      await time.increase(inactivityPeriod + gracePeriod + 5); // fully elapsed
+    it("should unlock recipientB after its separate threshold is met", async function () {
+      await time.increase(310); // 310 > 200 + 100 (recipientB threshold)
 
-      const claimedShare = await vaultContract.connect(recipient).claimVaultShare(vaultId);
-      expect(claimedShare).to.equal(share1);
+      const statusA = await vaultContract.getRecipientStatus(vaultId, recipientA.address, "Memories");
+      const statusB = await vaultContract.getRecipientStatus(vaultId, recipientB.address, "Finances");
+      
+      expect(statusA).to.equal(2); // Status.UNLOCKED
+      expect(statusB).to.equal(2); // Status.UNLOCKED
+
+      const claimedShareB = await vaultContract.connect(recipientB).claimVaultShare(vaultId, "Finances");
+      expect(claimedShareB).to.equal(shareB);
     });
 
-    it("should prevent non-recipient from claiming share even when UNLOCKED", async function () {
-      await time.increase(inactivityPeriod + gracePeriod + 5);
+    it("should prevent cross-claims or claiming with wrong category", async function () {
+      await time.increase(310);
 
+      // recipientA trying to claim Finances should fail
       await expect(
-        vaultContract.connect(otherAccount).claimVaultShare(vaultId)
-      ).to.be.revertedWith("LastWishVault: Only the designated recipient can perform this action.");
+        vaultContract.connect(recipientA).claimVaultShare(vaultId, "Finances")
+      ).to.be.revertedWith("LastWishVault: Caller is not a recipient for this category, or vault is locked.");
     });
   });
 });

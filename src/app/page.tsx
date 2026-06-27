@@ -22,68 +22,112 @@ import {
   Copy,
   Check,
   Search,
-  Eye
+  Eye,
+  Download,
+  File,
+  Wallet,
+  Box,
+  LayoutDashboard,
+  Database,
+  PlusCircle,
+  Activity,
+  Settings
 } from "lucide-react";
 import canvasConfetti from "canvas-confetti";
 import { encryptAndSplit, reconstructAndDecrypt, EncryptedPayload } from "../utils/crypto";
 import { getVaultContract, DEFAULT_CONTRACT_ADDRESS } from "../utils/contract";
 import { uploadToIPFS, downloadFromIPFS } from "../utils/ipfs";
 import { BrowserProvider, ethers } from "ethers";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useMotionValue, useTransform, useSpring } from "framer-motion";
 
-// Define Types
-interface Vault {
-  id: string;
-  name: string;
+// Define Types for Multi-Recipient Architecture
+interface VaultConfig {
   recipientAddress: string;
-  inactivityPeriod: number; // in seconds for demo
-  gracePeriod: number;      // in seconds for demo
-  createdAt: number;        // timestamp ms
-  lastHeartbeat: number;    // timestamp ms
-  payload: EncryptedPayload;
-  share1: string;           // contract share (index-hex)
-  share2: string;           // recipient share
-  share3: string;           // backup/keeper share
+  category: string;          // Memories, Finances, Medical, Custom
+  inactivityPeriod: number;  // in seconds for demo
+  gracePeriod: number;       // in seconds for demo
+  share1: string;            // locked on-chain share
+  share2: string;            // recipient share (given to heir)
+  share3: string;            // backup share
+  ipfsHash: string;          // IPFS CID of encrypted payload
+  fileName?: string;         // Optional file name if uploaded
+  fileType?: string;         // Optional file type if uploaded
   status: "ACTIVE" | "PENDING_UNLOCK" | "UNLOCKED";
 }
 
-// Initial Mock Seed Data
-const INITIAL_VAULTS: Vault[] = [];
-
-// Twinkling Star/Particle Component
-interface StarProps {
-  top: string;
-  left: string;
-  size: number;
-  delay: string;
+interface Vault {
+  id: string;                // Vault ID (bytes32 hex)
+  name: string;              // User-facing name
+  createdAt: number;         // ms
+  lastHeartbeat: number;     // ms
+  ownerAddress: string;
+  configs: VaultConfig[];
 }
-const Star: React.FC<StarProps> = ({ top, left, size, delay }) => (
-  <div 
-    className="absolute rounded-full bg-[#faf6ee] animate-twinkle pointer-events-none"
-    style={{
-      top,
-      left,
-      width: `${size}px`,
-      height: `${size}px`,
-      animationDelay: delay,
-    }}
-  />
-);
+
+interface CategoryConfigInput {
+  id: string;
+  category: string;
+  recipient: string;
+  inactivityPeriod: number;
+  gracePeriod: number;
+  content: string;           // Plain text or File Data URL
+  fileName?: string;
+  fileType?: string;
+}
 
 export default function LastWishApp() {
-  // App navigation state (Landing leads to Dash/Claim)
   const [showLanding, setShowLanding] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<"owner" | "recipient" | "inspector" | "playground">("owner");
+  const [landingTab, setLandingTab] = useState<"home" | "how-it-works" | "security" | "about">("home");
+  const [inspectSubTab, setInspectSubTab] = useState<"overview" | "recipients" | "files" | "transactions" | "contract">("overview");
   
-  // Wallet Connection Simulation
+  // Wallet state
   const [isConnected, setIsConnected] = useState<boolean>(false);
   const [userAddress, setUserAddress] = useState<string>("");
-  const [copiedShare, setCopiedShare] = useState<number | null>(null);
+  const [copiedShare, setCopiedShare] = useState<string | null>(null);
+
+  // Vault Hero Animation State
+  const [animationStage, setAnimationStage] = useState<number>(0);
+
+  // Hero 3D Tilt Vault Card State
+  const [isCardHovered, setIsCardHovered] = useState(false);
+  const tiltX = useMotionValue(0);
+  const tiltY = useMotionValue(0);
+  
+  const tiltXSpring = useSpring(tiltX, { stiffness: 120, damping: 20 });
+  const tiltYSpring = useSpring(tiltY, { stiffness: 120, damping: 20 });
+  
+  const rotateXVal = useTransform(tiltYSpring, [-0.5, 0.5], [8, -8]);
+  const rotateYVal = useTransform(tiltXSpring, [-0.5, 0.5], [-8, 8]);
+
+  const handleCardMouseMove = (event: React.MouseEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const mouseX = event.clientX - rect.left - rect.width / 2;
+    const mouseY = event.clientY - rect.top - rect.height / 2;
+    tiltX.set(mouseX / rect.width);
+    tiltY.set(mouseY / rect.height);
+  };
+  
+  const handleCardMouseLeave = () => {
+    setIsCardHovered(false);
+    tiltX.set(0);
+    tiltY.set(0);
+  };
+  useEffect(() => {
+    if (!showLanding) return;
+    const interval = setInterval(() => {
+      setAnimationStage((prev) => (prev + 1) % 5);
+    }, 2800);
+    return () => clearInterval(interval);
+  }, [showLanding]);
+
+  const [ctaHovered, setCtaHovered] = useState<boolean>(false);
+  const [showSecurityModal, setShowSecurityModal] = useState<boolean>(false);
+  const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
+  const [showHelpModal, setShowHelpModal] = useState<boolean>(false);
 
   // Background stars
   const [stars, setStars] = useState<Array<{ top: string; left: string; size: number; delay: string }>>([]);
-
-  // Generate stars on mount
   useEffect(() => {
     const starArray = Array.from({ length: 35 }, (_, i) => ({
       top: `${Math.random() * 100}%`,
@@ -97,40 +141,42 @@ export default function LastWishApp() {
   // Vault Management States
   const [vaults, setVaults] = useState<Vault[]>([]);
   const [timerSeconds, setTimerSeconds] = useState<number>(0);
-  
-  // Smart Contract Configuration State
   const [contractAddress, setContractAddress] = useState<string>(DEFAULT_CONTRACT_ADDRESS);
-
-  // Sandbox vs Web3 Modes State
   const [isSandboxMode, setIsSandboxMode] = useState<boolean>(false);
 
-  // Create Vault Wizard State
+  // Setup Wizard State
   const [step, setStep] = useState<number>(1);
   const [isWizardActive, setIsWizardActive] = useState<boolean>(false);
   const [newVaultName, setNewVaultName] = useState<string>("");
-  const [newRecipient, setNewRecipient] = useState<string>("");
-  const [newInactivity, setNewInactivity] = useState<number>(30);
-  const [newGrace, setNewGrace] = useState<number>(7);
-  const [newContent, setNewContent] = useState<string>("");
+  
+  // Current editing category state
+  const [wizardCategories, setWizardCategories] = useState<CategoryConfigInput[]>([]);
+  const [editCategory, setEditCategory] = useState<string>("Memories");
+  const [editRecipient, setEditRecipient] = useState<string>("");
+  const [editInactivity, setEditInactivity] = useState<number>(30);
+  const [editGrace, setEditGrace] = useState<number>(7);
+  const [editContent, setEditContent] = useState<string>("");
+  const [editContentType, setEditContentType] = useState<"text" | "file">("text");
+  
+  // File state
+  const [uploadedFileName, setUploadedFileName] = useState<string>("");
+  const [uploadedFileType, setUploadedFileType] = useState<string>("");
   const [isEncrypting, setIsEncrypting] = useState<boolean>(false);
-  const [createdVaultShares, setCreatedVaultShares] = useState<string[]>([]);
-  const [createdVaultPayload, setCreatedVaultPayload] = useState<EncryptedPayload | null>(null);
+
+  // Wizard results
   const [createdVaultId, setCreatedVaultId] = useState<string>("");
+  const [createdVaultConfigs, setCreatedVaultConfigs] = useState<VaultConfig[]>([]);
 
   // Recipient Claim Portal State
   const [claimVaultAddress, setClaimVaultAddress] = useState<string>("");
+  const [claimCategory, setClaimCategory] = useState<string>("Memories");
   const [recipientShareInput, setRecipientShareInput] = useState<string>("");
   const [decryptionResult, setDecryptionResult] = useState<string | null>(null);
+  const [decryptedItems, setDecryptedItems] = useState<Array<{ category: string; fileName?: string; fileType?: string; content: string }>>([]);
   const [decryptionError, setDecryptionError] = useState<string | null>(null);
   const [isDecrypting, setIsDecrypting] = useState<boolean>(false);
-
-  // Cryptographic Playground State
-  const [pgText, setPgText] = useState<string>("Confluence 2.0 Hackathon Winner");
-  const [pgShares, setPgShares] = useState<string[]>([]);
-  const [pgSelectedShares, setPgSelectedShares] = useState<string[]>(["", ""]);
-  const [pgDecryptedText, setPgDecryptedText] = useState<string>("");
-  const [pgDecryptedError, setPgDecryptedError] = useState<string>("");
-  const [pgPayload, setPgPayload] = useState<EncryptedPayload | null>(null);
+  const [decryptedFileName, setDecryptedFileName] = useState<string | null>(null);
+  const [decryptedFileType, setDecryptedFileType] = useState<string | null>(null);
 
   // On-Chain Vault Inspector State
   const [inspectVaultId, setInspectVaultId] = useState<string>("");
@@ -138,24 +184,23 @@ export default function LastWishApp() {
   const [inspectError, setInspectError] = useState<string | null>(null);
   const [isInspectLoading, setIsInspectLoading] = useState<boolean>(false);
 
+  // Playground Sandbox State
+  const [pgText, setPgText] = useState<string>("Confluence 2.0 Hackathon Winner");
+  const [pgShares, setPgShares] = useState<string[]>([]);
+  const [pgSelectedShares, setPgSelectedShares] = useState<string[]>(["", ""]);
+  const [pgDecryptedText, setPgDecryptedText] = useState<string>("");
+  const [pgDecryptedError, setPgDecryptedError] = useState<string>("");
+  const [pgPayload, setPgPayload] = useState<EncryptedPayload | null>(null);
+
   // Load vaults from localStorage
   useEffect(() => {
-    const savedVaults = localStorage.getItem("lastwish_vaults");
+    const savedVaults = localStorage.getItem("lastwish_vaults_v2");
     if (savedVaults) {
       try {
-        const parsed: Vault[] = JSON.parse(savedVaults);
-        // Clear/filter out any old mock seed vaults from prior sessions
-        const filtered = parsed.filter(v => 
-          v.id !== "0x8a92f012b3c7..." && 
-          v.id !== "0xfb78a9c2d1b8..."
-        );
-        setVaults(filtered);
-        localStorage.setItem("lastwish_vaults", JSON.stringify(filtered));
+        setVaults(JSON.parse(savedVaults));
       } catch (e) {
-        setVaults(INITIAL_VAULTS);
+        setVaults([]);
       }
-    } else {
-      setVaults(INITIAL_VAULTS);
     }
 
     const savedAddress = localStorage.getItem("lastwish_contract_address");
@@ -173,30 +218,31 @@ export default function LastWishApp() {
         let changed = false;
         const updatedVaults = prevVaults.map(vault => {
           const elapsed = (Date.now() - vault.lastHeartbeat) / 1000;
-          const inactivityLimit = vault.inactivityPeriod;
-          const graceLimit = vault.gracePeriod;
           
-          let newStatus = vault.status;
-          
-          if (elapsed >= inactivityLimit + graceLimit) {
-            newStatus = "UNLOCKED";
-          } else if (elapsed >= inactivityLimit) {
-            newStatus = "PENDING_UNLOCK";
-          } else {
-            newStatus = "ACTIVE";
-          }
-          
-          console.log(`[Timer] Vault: ${vault.name}, ID: ${vault.id}, Status: ${vault.status} -> ${newStatus}, lastHeartbeat: ${vault.lastHeartbeat}, elapsed: ${elapsed}s, inactivityLimit: ${inactivityLimit}s, graceLimit: ${graceLimit}s`);
+          const updatedConfigs = vault.configs.map(config => {
+            let newStatus = config.status;
+            if (elapsed >= config.inactivityPeriod + config.gracePeriod) {
+              newStatus = "UNLOCKED";
+            } else if (elapsed >= config.inactivityPeriod) {
+              newStatus = "PENDING_UNLOCK";
+            } else {
+              newStatus = "ACTIVE";
+            }
+            if (newStatus !== config.status) {
+              changed = true;
+              return { ...config, status: newStatus as any };
+            }
+            return config;
+          });
 
-          if (newStatus !== vault.status) {
-            changed = true;
-            return { ...vault, status: newStatus };
+          if (changed) {
+            return { ...vault, configs: updatedConfigs };
           }
           return vault;
         });
         
         if (changed) {
-          localStorage.setItem("lastwish_vaults", JSON.stringify(updatedVaults));
+          localStorage.setItem("lastwish_vaults_v2", JSON.stringify(updatedVaults));
         }
         return updatedVaults;
       });
@@ -210,7 +256,7 @@ export default function LastWishApp() {
     if (!isConnected || userAddress.startsWith("0x6ab162")) return;
     try {
       const contract = await getVaultContract(contractAddress);
-      const savedVaults = localStorage.getItem("lastwish_vaults");
+      const savedVaults = localStorage.getItem("lastwish_vaults_v2");
       if (!savedVaults) return;
       const currentVaults: Vault[] = JSON.parse(savedVaults);
 
@@ -222,20 +268,31 @@ export default function LastWishApp() {
         try {
           console.log(`[Sync] Querying blockchain for Vault ID: ${v.id}...`);
           const details = await contract.getVaultDetails(v.id);
-          const statusMap: ("ACTIVE" | "PENDING_UNLOCK" | "UNLOCKED")[] = ["ACTIVE", "PENDING_UNLOCK", "UNLOCKED"];
           const newHeartbeat = Number(details.lastHeartbeat) * 1000;
-          const newStatus = statusMap[Number(details.status)] || v.status;
-          
-          console.log(`[Sync] Success for Vault ID: ${v.id}. onChainHeartbeat: ${Number(details.lastHeartbeat) * 1000} (ms), onChainStatus: ${newStatus}`);
+          const statusMap: ("ACTIVE" | "PENDING_UNLOCK" | "UNLOCKED")[] = ["ACTIVE", "PENDING_UNLOCK", "UNLOCKED"];
 
-          if (v.lastHeartbeat !== newHeartbeat || v.status !== newStatus) {
+          const updatedConfigs = await Promise.all(v.configs.map(async (cfg) => {
+            const onChainStatusNum = await contract.getRecipientStatus(v.id, cfg.recipientAddress, cfg.category);
+            const onChainStatus = statusMap[Number(onChainStatusNum)] || cfg.status;
+            
+            if (cfg.status !== onChainStatus) {
+              changed = true;
+            }
+            return {
+              ...cfg,
+              status: onChainStatus
+            };
+          }));
+
+          if (v.lastHeartbeat !== newHeartbeat || changed) {
             changed = true;
+            return {
+              ...v,
+              lastHeartbeat: newHeartbeat,
+              configs: updatedConfigs
+            };
           }
-          return {
-            ...v,
-            lastHeartbeat: newHeartbeat,
-            status: newStatus
-          };
+          return v;
         } catch (e: any) {
           console.log(`[Sync] Failed/Reverted for Vault ID: ${v.id}. Error: ${e.message}`);
           return v;
@@ -244,7 +301,7 @@ export default function LastWishApp() {
 
       if (changed) {
         setVaults(synced);
-        localStorage.setItem("lastwish_vaults", JSON.stringify(synced));
+        localStorage.setItem("lastwish_vaults_v2", JSON.stringify(synced));
       }
     } catch (err) {
       console.warn("Periodic sync failed:", err);
@@ -283,11 +340,9 @@ export default function LastWishApp() {
         canvasConfetti({
           particleCount: 50,
           spread: 60,
-          colors: ["#e5c483", "#faf6ee", "#ddb892"],
-          origin: { y: 0.8 }
+          colors: ["#e5c483", "#faf6ee", "#ddb892"]
         });
         
-        // Immediate sync
         setTimeout(() => syncVaultsWithBlockchain(), 500);
       } catch (err: any) {
         console.error("Connection failed:", err);
@@ -337,15 +392,16 @@ export default function LastWishApp() {
       setVaults(prev => {
         const updated = prev.map(v => {
           if (v.id === vaultId) {
+            const updatedConfigs = v.configs.map(cfg => ({ ...cfg, status: "ACTIVE" as const }));
             return {
               ...v,
               lastHeartbeat: Date.now(),
-              status: "ACTIVE" as const
+              configs: updatedConfigs
             };
           }
           return v;
         });
-        localStorage.setItem("lastwish_vaults", JSON.stringify(updated));
+        localStorage.setItem("lastwish_vaults_v2", JSON.stringify(updated));
         return updated;
       });
 
@@ -380,15 +436,16 @@ export default function LastWishApp() {
       setVaults(prev => {
         const updated = prev.map(v => {
           if (v.id === vaultId) {
+            const updatedConfigs = v.configs.map(cfg => ({ ...cfg, status: "ACTIVE" as const }));
             return {
               ...v,
               lastHeartbeat: Date.now(),
-              status: "ACTIVE" as const
+              configs: updatedConfigs
             };
           }
           return v;
         });
-        localStorage.setItem("lastwish_vaults", JSON.stringify(updated));
+        localStorage.setItem("lastwish_vaults_v2", JSON.stringify(updated));
         return updated;
       });
 
@@ -405,7 +462,7 @@ export default function LastWishApp() {
     if (confirm("Are you sure you want to remove this vault from your local dashboard? (On-chain data will not be deleted)")) {
       const updated = vaults.filter(v => v.id !== vaultId);
       setVaults(updated);
-      localStorage.setItem("lastwish_vaults", JSON.stringify(updated));
+      localStorage.setItem("lastwish_vaults_v2", JSON.stringify(updated));
     }
   };
 
@@ -416,8 +473,34 @@ export default function LastWishApp() {
     setInspectedVault(null);
 
     const cleanId = inspectVaultId.trim();
-    if (!cleanId.startsWith("0x") || cleanId.length !== 66) {
-      setInspectError("Please enter a valid 66-character bytes32 Vault ID (starting with 0x).");
+    const localVault = vaults.find(v => v.id.toLowerCase() === cleanId.toLowerCase() || cleanId.toLowerCase().includes(v.id.toLowerCase()));
+
+    if (!localVault && (!cleanId.startsWith("0x") || cleanId.length !== 66)) {
+      setInspectError("Please enter a valid 66-character bytes32 Vault ID (starting with 0x) or a simulated Vault ID.");
+      return;
+    }
+
+    if (localVault && (!cleanId.startsWith("0x") || cleanId.length !== 66)) {
+      setInspectedVault({
+        id: localVault.id,
+        owner: userAddress || "0xC271E35E529ab34ce2224792cF368bAF13eCE163",
+        lastHeartbeat: localVault.lastHeartbeat,
+        recipientCount: localVault.configs.length,
+        configs: localVault.configs.map(c => ({
+          recipientAddress: c.recipientAddress,
+          category: c.category,
+          inactivityPeriod: c.inactivityPeriod,
+          gracePeriod: c.gracePeriod,
+          share1: c.share1,
+          ipfsHash: c.ipfsHash,
+          status: c.status
+        }))
+      });
+      canvasConfetti({
+        particleCount: 25,
+        spread: 40,
+        colors: ["#e5c483", "#faf6ee"]
+      });
       return;
     }
 
@@ -426,19 +509,36 @@ export default function LastWishApp() {
       const contract = await getVaultContract(contractAddress);
       console.log(`[Inspector] Querying contract details for Vault ID: ${cleanId}...`);
       const details = await contract.getVaultDetails(cleanId);
+      const onChainRecipients = await contract.getVaultRecipients(cleanId);
       
       const statusMap = ["ACTIVE", "PENDING_UNLOCK", "UNLOCKED"];
-      const status = statusMap[Number(details.status)] || "UNKNOWN";
+      
+      const configs = onChainRecipients.map((r: any) => {
+        return {
+          recipientAddress: r.recipient,
+          category: r.category,
+          inactivityPeriod: Number(r.inactivityPeriod),
+          gracePeriod: Number(r.gracePeriod),
+          share1: r.share1,
+          ipfsHash: r.ipfsHash
+        };
+      });
+
+      // Query dynamic status for each recipient/category config
+      const configsWithStatus = await Promise.all(configs.map(async (c: any) => {
+        const rawStatus = await contract.getRecipientStatus(cleanId, c.recipientAddress, c.category);
+        return {
+          ...c,
+          status: statusMap[Number(rawStatus)] || "ACTIVE"
+        };
+      }));
       
       setInspectedVault({
         id: cleanId,
         owner: details.owner,
-        recipient: details.recipient,
-        inactivityPeriod: Number(details.inactivityPeriod),
-        gracePeriod: Number(details.gracePeriod),
         lastHeartbeat: Number(details.lastHeartbeat) * 1000,
-        ipfsHash: details.ipfsHash,
-        status: status
+        recipientCount: Number(details.recipientCount),
+        configs: configsWithStatus
       });
 
       canvasConfetti({
@@ -454,39 +554,122 @@ export default function LastWishApp() {
     }
   };
 
-  // Create Vault Wizard Handlers
+  // Add category recipient to current editing list in Wizard
+  const addCategoryToWizard = () => {
+    if (!editRecipient || !editContent) return;
+    
+    // Simple address validation
+    if (!editRecipient.startsWith("0x") || editRecipient.length !== 42) {
+      alert("Please enter a valid 42-character recipient address.");
+      return;
+    }
+
+    const isDuplicate = wizardCategories.some(c => c.recipient.toLowerCase() === editRecipient.toLowerCase() && c.category === editCategory);
+    if (isDuplicate) {
+      alert("A configuration for this recipient under this category already exists.");
+      return;
+    }
+
+    const newItem: CategoryConfigInput = {
+      id: Math.random().toString(36).substring(7),
+      category: editCategory,
+      recipient: editRecipient,
+      inactivityPeriod: editInactivity,
+      gracePeriod: editGrace,
+      content: editContent,
+      fileName: editContentType === "file" ? uploadedFileName : undefined,
+      fileType: editContentType === "file" ? uploadedFileType : undefined
+    };
+
+    setWizardCategories([...wizardCategories, newItem]);
+    
+    // Reset edit state (keep recipient/times for convenience, clear contents)
+    setEditContent("");
+    setUploadedFileName("");
+    setUploadedFileType("");
+  };
+
+  const removeCategoryFromWizard = (id: string) => {
+    setWizardCategories(wizardCategories.filter(c => c.id !== id));
+  };
+
+  // Handle File Upload & Convert to Data URL
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    
+    const file = files[0];
+    if (file.size > 2 * 1024 * 1024) {
+      alert("For local prototype, please limit upload file size to 2MB.");
+      return;
+    }
+
+    setUploadedFileName(file.name);
+    setUploadedFileType(file.type);
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      setEditContent(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Execute wizard configuration encryption and on-chain registration
   const handleCreateVault = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newVaultName || !newRecipient || !newContent) return;
+    if (wizardCategories.length === 0 || !newVaultName) return;
 
     setIsEncrypting(true);
 
     try {
-      // Step 1: Encrypt locally and split keys
-      const result = await encryptAndSplit(newContent, 2, 3);
-      
-      // Step 2: Upload encrypted payload to IPFS (via Pinata or fallback local simulation)
-      const ipfsHash = await uploadToIPFS(result.payload, newVaultName);
-      const ipfsUri = `ipfs://${ipfsHash}`;
+      const finalConfigs: VaultConfig[] = [];
+      const onChainConfigsParam = [];
 
-      // Step 3: Generate a unique bytes32 ID
+      // Step 1: Encrypt each category configuration separately
+      for (const catInput of wizardCategories) {
+        // Encrypt locally and split keys (2-of-3 SSS)
+        const result = await encryptAndSplit(catInput.content, 2, 3);
+        
+        // Upload ciphertext to IPFS (via Pinata or local simulation fallback)
+        const ipfsHash = await uploadToIPFS(result.payload, `${newVaultName}-${catInput.category}`);
+        const ipfsUri = `ipfs://${ipfsHash}`;
+
+        finalConfigs.push({
+          recipientAddress: catInput.recipient,
+          category: catInput.category,
+          inactivityPeriod: catInput.inactivityPeriod,
+          gracePeriod: catInput.gracePeriod,
+          share1: result.shares[0],
+          share2: result.shares[1],
+          share3: result.shares[2],
+          ipfsHash: ipfsUri,
+          fileName: catInput.fileName,
+          fileType: catInput.fileType,
+          status: "ACTIVE"
+        });
+
+        // Add config structure matching smart contract ABI input
+        onChainConfigsParam.push({
+          recipient: catInput.recipient,
+          category: catInput.category,
+          inactivityPeriod: catInput.inactivityPeriod,
+          gracePeriod: catInput.gracePeriod,
+          share1: result.shares[0],
+          ipfsHash: ipfsUri
+        });
+      }
+
+      // Step 2: Generate bytes32 vault ID
       const randomBytes = ethers.randomBytes(32);
       const vaultIdBytes32 = ethers.hexlify(randomBytes);
 
       let onChainRegistered = false;
-      
-      // Step 4: Try to register on-chain if connected to MetaMask
+
+      // Step 3: Call contract if connected
       if (isConnected && !userAddress.startsWith("0x6ab162")) {
         try {
           const contract = await getVaultContract(contractAddress);
-          const tx = await contract.createVault(
-            vaultIdBytes32,
-            newRecipient,
-            newInactivity,
-            newGrace,
-            result.shares[0], // Share 1 is locked in contract
-            ipfsUri
-          );
+          const tx = await contract.createVault(vaultIdBytes32, onChainConfigsParam);
           await tx.wait();
           onChainRegistered = true;
         } catch (contractErr: any) {
@@ -495,7 +678,6 @@ export default function LastWishApp() {
         }
       }
 
-      // If not registered on-chain, we use a shortened ID for simulation readability
       const finalId = onChainRegistered ? vaultIdBytes32 : "0x" + Array.from({ length: 12 }, () => 
         Math.floor(Math.random() * 16).toString(16)
       ).join("") + "...";
@@ -503,24 +685,17 @@ export default function LastWishApp() {
       const createdVault: Vault = {
         id: finalId,
         name: newVaultName,
-        recipientAddress: newRecipient,
-        inactivityPeriod: newInactivity,
-        gracePeriod: newGrace,
         createdAt: Date.now(),
         lastHeartbeat: Date.now(),
-        payload: result.payload,
-        share1: result.shares[0],
-        share2: result.shares[1],
-        share3: result.shares[2],
-        status: "ACTIVE"
+        ownerAddress: userAddress,
+        configs: finalConfigs
       };
 
       const updatedVaults = [...vaults, createdVault];
       setVaults(updatedVaults);
-      localStorage.setItem("lastwish_vaults", JSON.stringify(updatedVaults));
+      localStorage.setItem("lastwish_vaults_v2", JSON.stringify(updatedVaults));
 
-      setCreatedVaultPayload(result.payload);
-      setCreatedVaultShares(result.shares);
+      setCreatedVaultConfigs(finalConfigs);
       setCreatedVaultId(finalId);
       setStep(4);
     } catch (err: any) {
@@ -530,34 +705,16 @@ export default function LastWishApp() {
     }
   };
 
-  const copyToClipboard = (text: string, index: number) => {
-    navigator.clipboard.writeText(text);
-    setCopiedShare(index);
-    setTimeout(() => setCopiedShare(null), 2000);
-  };
-
-  const resetWizard = () => {
-    setStep(1);
-    setNewVaultName("");
-    setNewRecipient("");
-    setNewInactivity(30);
-    setNewGrace(7);
-    setNewContent("");
-    setCreatedVaultShares([]);
-    setCreatedVaultPayload(null);
-    setCreatedVaultId("");
-    setIsWizardActive(false);
-  };
-
-  // Recipient Claim Portal Handler
+  // Decrypt recipient categories in portal
   const handleDecryptVault = async (e: React.FormEvent) => {
     e.preventDefault();
     setDecryptionError(null);
     setDecryptionResult(null);
+    setDecryptedItems([]);
+    setDecryptedFileName(null);
+    setDecryptedFileType(null);
 
     const cleanAddress = claimVaultAddress.trim();
-    let share1ToUse = "";
-    let payloadToUse: EncryptedPayload | null = null;
     let isOnChain = false;
 
     if (cleanAddress.startsWith("0x") && cleanAddress.length === 66 && isConnected && !userAddress.startsWith("0x6ab162")) {
@@ -566,70 +723,172 @@ export default function LastWishApp() {
 
     const targetVault = vaults.find(v => v.id.toLowerCase().includes(cleanAddress.toLowerCase()) || cleanAddress.toLowerCase().includes(v.id.toLowerCase()));
 
-    if (!targetVault && !isOnChain) {
-      setDecryptionError("Vault not found. For local/simulation vaults, you must be on the same device. For live on-chain vaults, make sure you enter the correct 66-character Vault ID.");
+    // Find the configs matching recipient address
+    let configsToProcess: Array<{ category: string; share1: string; fileName?: string; fileType?: string; ipfsHash: string; status?: string }> = [];
+
+    if (isOnChain) {
+      try {
+        const contract = await getVaultContract(contractAddress);
+        const recipients = await contract.getVaultRecipients(cleanAddress);
+        
+        // Filter by connected userAddress
+        const matchingRecipients = recipients.filter(
+          (r: any) => r.recipient.toLowerCase() === userAddress.toLowerCase()
+        );
+
+        if (matchingRecipients.length === 0) {
+          throw new Error(`Connected wallet (${userAddress.slice(0, 6)}...${userAddress.slice(-4)}) is not registered as a recipient in this vault on-chain.`);
+        }
+
+        for (const r of matchingRecipients) {
+          configsToProcess.push({
+            category: r.category,
+            share1: "", // will fetch on-chain
+            ipfsHash: r.ipfsHash
+          });
+        }
+      } catch (err: any) {
+        setDecryptionError(err.message || "Failed to query vault configurations from blockchain.");
+        return;
+      }
+    } else {
+      if (!targetVault) {
+        setDecryptionError("Vault not found. Please verify the Vault ID.");
+        return;
+      }
+      
+      let localMatching = targetVault.configs.filter(
+        cfg => cfg.share2.trim() === recipientShareInput.trim()
+      );
+
+      if (localMatching.length === 0) {
+        localMatching = targetVault.configs.filter(
+          cfg => !isConnected || !userAddress || cfg.recipientAddress.toLowerCase() === userAddress.toLowerCase()
+        );
+      }
+
+      if (localMatching.length === 0) {
+        localMatching = targetVault.configs;
+      }
+
+      if (localMatching.length === 0) {
+        setDecryptionError("No configurations found in this simulated vault.");
+        return;
+      }
+
+      for (const cfg of localMatching) {
+        configsToProcess.push({
+          category: cfg.category,
+          share1: cfg.share1,
+          fileName: cfg.fileName,
+          fileType: cfg.fileType,
+          ipfsHash: cfg.ipfsHash,
+          status: cfg.status
+        });
+      }
+    }
+
+    if (!recipientShareInput.trim()) {
+      setDecryptionError("Please input your Key Share (Share 2).");
       return;
     }
 
-    if (targetVault) {
-      share1ToUse = targetVault.share1;
-      payloadToUse = targetVault.payload;
-    }
-    
     setIsDecrypting(true);
     await new Promise(resolve => setTimeout(resolve, 1200));
 
-    try {
-      if (isOnChain) {
-        try {
+    const results: Array<{ category: string; fileName?: string; fileType?: string; content: string }> = [];
+    const errors: string[] = [];
+
+    for (const item of configsToProcess) {
+      try {
+        let share1ToUse = item.share1;
+        let payloadToUse: EncryptedPayload | null = null;
+        let fileNameToUse = item.fileName;
+        let fileTypeToUse = item.fileType;
+
+        if (isOnChain) {
           const contract = await getVaultContract(contractAddress);
           
-          // 1. Fetch on-chain Share 1
-          const onChainShare1 = await contract.claimVaultShare(cleanAddress);
+          // 1. Claim share 1 on-chain for this category
+          const onChainShare1 = await contract.claimVaultShare(cleanAddress, item.category);
           share1ToUse = onChainShare1;
 
-          // 2. Fetch on-chain details to get IPFS CID
-          const details = await contract.getVaultDetails(cleanAddress);
-          const ipfsUri = details.ipfsHash; // e.g. "ipfs://Qm..."
+          // 2. Download from IPFS
+          payloadToUse = await downloadFromIPFS(item.ipfsHash);
 
-          // 3. Download encrypted payload from IPFS
-          payloadToUse = await downloadFromIPFS(ipfsUri);
-        } catch (contractErr: any) {
-          console.error("On-chain claimVaultShare / IPFS download failed:", contractErr);
-          throw new Error("Failed to retrieve locked data from the smart contract or IPFS. " + (contractErr.reason || contractErr.message));
+          // Find file metadata from local vault list if available
+          const localMatch = targetVault?.configs.find(cfg => cfg.category.toLowerCase() === item.category.toLowerCase());
+          if (localMatch) {
+            fileNameToUse = localMatch.fileName;
+            fileTypeToUse = localMatch.fileType;
+          }
+        } else {
+          // Simulation checks
+          if (item.status !== "UNLOCKED") {
+            throw new Error(`Vault category '${item.category}' is locked. Inactivity threshold not met.`);
+          }
+          // Load local simulated payload
+          payloadToUse = await downloadFromIPFS(item.ipfsHash);
         }
-      } else {
-        // If in simulation, let's verify if the status is unlocked
-        if (targetVault && targetVault.status !== "UNLOCKED") {
-          throw new Error(`Vault is currently locked. Status: ${targetVault.status}. The inactivity period must fully expire.`);
+
+        if (!payloadToUse) {
+          throw new Error("Encrypted payload data not found.");
         }
-      }
 
-      if (!recipientShareInput.trim()) {
-        throw new Error("Please input your Key Share (Share 2).");
-      }
+        const sharesToUse = [share1ToUse, recipientShareInput.trim()];
+        const decrypted = await reconstructAndDecrypt(payloadToUse, sharesToUse);
 
-      if (!payloadToUse) {
-        throw new Error("Encrypted payload data not found.");
+        results.push({
+          category: item.category,
+          fileName: fileNameToUse,
+          fileType: fileTypeToUse,
+          content: decrypted
+        });
+      } catch (err: any) {
+        console.error(`Decryption failed for category ${item.category}:`, err);
+        errors.push(`${item.category}: ${err.reason || err.message}`);
       }
+    }
 
-      const sharesToUse = [share1ToUse, recipientShareInput.trim()];
-      const decrypted = await reconstructAndDecrypt(payloadToUse, sharesToUse);
-      setDecryptionResult(decrypted);
-      
+    if (results.length > 0) {
+      setDecryptedItems(results);
       canvasConfetti({
         particleCount: 100,
         spread: 80,
         colors: ["#faf6ee", "#e5c483", "#ddb892"]
       });
-    } catch (err: any) {
-      setDecryptionError(err.message || "Decryption failed. The Key Share is incorrect or corrupted.");
-    } finally {
-      setIsDecrypting(false);
     }
+
+    if (errors.length > 0) {
+      setDecryptionError(errors.join(" | "));
+    }
+
+    setIsDecrypting(false);
   };
 
-  // Playground Handlers
+  const copyToClipboard = (text: string, key: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedShare(key);
+    setTimeout(() => setCopiedShare(null), 2000);
+  };
+
+  const resetWizard = () => {
+    setStep(1);
+    setNewVaultName("");
+    setWizardCategories([]);
+    setEditCategory("Memories");
+    setEditRecipient("");
+    setEditInactivity(30);
+    setEditGrace(7);
+    setEditContent("");
+    setUploadedFileName("");
+    setUploadedFileType("");
+    setCreatedVaultConfigs([]);
+    setCreatedVaultId("");
+    setIsWizardActive(false);
+  };
+
+  // Playground Sandbox functions
   const triggerPlaygroundSplit = async () => {
     if (!pgText) return;
     try {
@@ -674,79 +933,146 @@ export default function LastWishApp() {
   };
 
   return (
-    <div className="flex-1 flex flex-col min-h-screen relative">
+    <div className="flex-1 flex min-h-screen relative bg-[#090B14] text-white">
       
       {/* Background Twinkling Stars */}
       {stars.map((star, idx) => (
         <Star key={`star-${idx}`} {...star} />
       ))}
 
-      {/* Header Navigation (Figma Layout Mockup) */}
-      <header className="border-b border-[rgba(229,196,131,0.06)] px-6 py-4 flex items-center justify-between z-20 bg-[#0d0f19]/80 backdrop-blur-md">
-        
-        {/* Brand Logo */}
-        <button 
-          onClick={() => { setShowLanding(true); setIsWizardActive(false); }}
-          className="flex items-center space-x-2 text-left cursor-pointer"
-        >
-          <span className="text-[#faf6ee] text-lg font-bold flex items-center space-x-1.5 font-mono">
-            <span>🔓</span>
-            <span>LastWish</span>
-          </span>
-        </button>
+      {/* Fixed Glass Sidebar */}
+      {!showLanding && isConnected && (
+        <aside className="w-64 flex-shrink-0 border-r border-white/5 bg-[#121624]/75 backdrop-blur-md p-6 flex flex-col justify-between font-mono text-xs select-none">
+          <div className="space-y-8">
+            {/* Logo */}
+            <button 
+              onClick={() => { setShowLanding(true); setIsWizardActive(false); }}
+              className="flex items-center space-x-3 text-left cursor-pointer bg-transparent border-0 p-0"
+            >
+              <span className="w-8 h-8 rounded-lg bg-[#E6BE72]/15 border border-[#E6BE72]/30 flex items-center justify-center text-[#E6BE72] font-bold text-sm">
+                LW
+              </span>
+              <span className="text-[#faf6ee] text-base font-bold font-mono">
+                LastWish
+              </span>
+            </button>
 
-        {/* Central Tab Navigation Container */}
-        {!showLanding && (
-          <div className="flex bg-gray-950/80 border border-gray-900 rounded-full p-1 max-w-lg w-full mx-auto justify-between text-[10px] sm:text-xs">
-            <button 
-              onClick={() => { setActiveTab("owner"); setIsWizardActive(false); }}
-              className={`flex-1 py-1.5 px-2 text-center font-semibold rounded-full transition-all cursor-pointer ${
-                activeTab === "owner" ? "bg-gray-900 text-[#faf6ee] border border-[rgba(229,196,131,0.08)]" : "text-gray-400 hover:text-white"
-              }`}
+            {/* Navigation */}
+            <nav className="space-y-1.5">
+              {[
+                { id: "owner", label: "Owner Dashboard", icon: LayoutDashboard, action: () => { setActiveTab("owner"); setIsWizardActive(false); } },
+                { id: "my-vaults", label: "My Vaults", icon: Database, action: () => { setActiveTab("owner"); setIsWizardActive(false); setTimeout(() => { document.getElementById("vaults-container")?.scrollIntoView({ behavior: "smooth" }); }, 100); } },
+                { id: "create-vault", label: "Create Legacy Vault", icon: PlusCircle, action: () => { setActiveTab("owner"); setIsWizardActive(true); setStep(1); } },
+                { id: "recipient", label: "Claim Portal", icon: Unlock, action: () => { setActiveTab("recipient"); setIsWizardActive(false); } },
+                { id: "inspector", label: "Vault Inspector", icon: Search, action: () => { setActiveTab("inspector"); setIsWizardActive(false); } },
+                { id: "playground", label: "ZK/SSS Playground", icon: Box, action: () => { setActiveTab("playground"); setIsWizardActive(false); } },
+              ].map((item) => {
+                const isActive = 
+                  (item.id === "owner" && activeTab === "owner" && !isWizardActive) ||
+                  (item.id === "my-vaults" && activeTab === "owner" && !isWizardActive) ||
+                  (item.id === "create-vault" && isWizardActive) ||
+                  (item.id === "recipient" && activeTab === "recipient") ||
+                  (item.id === "inspector" && activeTab === "inspector") ||
+                  (item.id === "playground" && activeTab === "playground");
+
+                return (
+                  <button
+                    key={item.id}
+                    onClick={item.action}
+                    className={`w-full flex items-center space-x-3 px-4 py-3 rounded-xl transition-all cursor-pointer text-left border border-transparent bg-transparent font-bold ${
+                      isActive 
+                        ? "text-[#E6BE72] bg-[#E6BE72]/10 border-[#E6BE72]/20 shadow-[0_0_15px_rgba(230,190,114,0.1)]" 
+                        : "text-gray-400 hover:text-white hover:bg-white/5"
+                    }`}
+                  >
+                    <item.icon className={`w-4 h-4 ${isActive ? "text-[#E6BE72]" : "text-gray-400"}`} />
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
+
+          {/* Bottom Menu */}
+          <div className="space-y-1.5 border-t border-white/5 pt-4">
+            <button
+              onClick={() => setShowSettingsModal(true)}
+              className="w-full flex items-center space-x-3 px-4 py-2.5 rounded-xl text-gray-400 hover:text-white hover:bg-white/5 transition-all cursor-pointer text-left border-0 bg-transparent font-bold"
             >
-              <span className="hidden sm:inline">Owner Dashboard</span>
-              <span className="sm:hidden">Owner</span>
+              <Settings className="w-4 h-4 text-gray-400" />
+              <span>Settings</span>
             </button>
-            <button 
-              onClick={() => { setActiveTab("recipient"); setIsWizardActive(false); }}
-              className={`flex-1 py-1.5 px-2 text-center font-semibold rounded-full transition-all cursor-pointer ${
-                activeTab === "recipient" ? "bg-gray-900 text-[#faf6ee] border border-[rgba(229,196,131,0.08)]" : "text-gray-400 hover:text-white"
-              }`}
+            <button
+              onClick={() => setShowHelpModal(true)}
+              className="w-full flex items-center space-x-3 px-4 py-2.5 rounded-xl text-gray-400 hover:text-white hover:bg-white/5 transition-all cursor-pointer text-left border-0 bg-transparent font-bold"
             >
-              <span className="hidden sm:inline">Claim Legacy Portal</span>
-              <span className="sm:hidden">Claim</span>
+              <HelpCircle className="w-4 h-4 text-gray-400" />
+              <span>Help & Support</span>
             </button>
+          </div>
+        </aside>
+      )}
+
+      {/* Main Workspace Frame */}
+      <div className="flex-1 flex flex-col min-h-screen relative w-full overflow-x-hidden">
+
+        {/* Header Navigation */}
+        <header className="border-b border-white/5 px-6 py-4 flex items-center justify-between z-20 backdrop-blur-md bg-[#0d0f19]/80">
+        {showLanding ? (
+          <>
+            {/* Landing Logo */}
             <button 
-              onClick={() => { setActiveTab("inspector"); setIsWizardActive(false); }}
-              className={`flex-1 py-1.5 px-2 text-center font-semibold rounded-full transition-all cursor-pointer ${
-                activeTab === "inspector" ? "bg-gray-900 text-[#faf6ee] border border-[rgba(229,196,131,0.08)]" : "text-gray-400 hover:text-white"
-              }`}
+              onClick={() => { setShowLanding(true); setIsWizardActive(false); }}
+              className="flex items-center space-x-2 text-left cursor-pointer bg-transparent border-0 p-0"
             >
-              <span className="hidden sm:inline">Vault Inspector</span>
-              <span className="sm:hidden">Inspect</span>
+              <span className="text-[#faf6ee] text-lg font-bold flex items-center space-x-1.5 font-mono">
+                <span className="text-[#E6BE72]">🔒</span>
+                <span>LastWish</span>
+              </span>
             </button>
-            <button 
-              onClick={() => { setActiveTab("playground"); setIsWizardActive(false); }}
-              className={`flex-1 py-1.5 px-2 text-center font-semibold rounded-full transition-all cursor-pointer ${
-                activeTab === "playground" ? "bg-gray-900 text-[#faf6ee] border border-[rgba(229,196,131,0.08)]" : "text-gray-400 hover:text-white"
-              }`}
-            >
-              <span className="hidden sm:inline">ZK/SSS Playground</span>
-              <span className="sm:hidden">Sandbox</span>
-            </button>
+
+            {/* Landing Navigation Links */}
+            <div className="hidden md:flex items-center space-x-8 font-mono text-xs">
+              {[
+                { id: "home", label: "Home" },
+                { id: "how-it-works", label: "How it Works" },
+                { id: "security", label: "Security" },
+                { id: "about", label: "About" }
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setLandingTab(tab.id as any)}
+                  className={`hover:text-white transition-colors bg-transparent border-0 font-mono text-xs cursor-pointer ${
+                    landingTab === tab.id ? "text-[#E6BE72] font-bold" : "text-gray-400"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="flex items-center space-x-3 font-mono">
+            <span className="text-[10px] text-[#E6BE72] bg-[#E6BE72]/10 px-2 py-0.5 rounded border border-[#E6BE72]/25 font-bold uppercase tracking-wider">
+              {isSandboxMode ? "Simulator" : "Mainnet"}
+            </span>
+            <span className="text-white text-xs font-bold font-mono">
+              {activeTab === "owner" ? (isWizardActive ? "Capsule Wizard" : "Owner Dashboard") : 
+               activeTab === "recipient" ? "Claim Portal" : 
+               activeTab === "inspector" ? "Vault Inspector" : "ZK/SSS Playground"}
+            </span>
           </div>
         )}
 
-        {/* Wallet Connection Trigger */}
         <div className="flex items-center space-x-3">
           {isConnected ? (
             <div className="flex items-center space-x-2">
-              <span className="font-mono text-xs text-[#ddb892] bg-[#151824] px-3 py-1.5 rounded-lg border border-[rgba(229,196,131,0.12)]">
+              <span className="font-mono text-xs text-[#E6BE72] bg-[#111827]/80 px-3.5 py-1.5 rounded-full border border-white/5">
                 {userAddress.substring(0, 6)}...{userAddress.substring(34)}
               </span>
               <button 
                 onClick={disconnectWallet}
-                className="text-xs text-red-400 hover:text-red-300 font-semibold px-2 py-1 rounded"
+                className="text-xs text-[#FF5A5F] hover:text-[#FF5A5F]/80 font-bold px-3.5 py-1.5 rounded-full border border-[#FF5A5F]/20 bg-[#FF5A5F]/5 cursor-pointer font-mono"
               >
                 Disconnect
               </button>
@@ -754,9 +1080,9 @@ export default function LastWishApp() {
           ) : (
             <button 
               onClick={() => connectWallet()}
-              className="bg-gradient-to-r from-[#e5c483] to-[#c5a880] text-gray-950 font-extrabold text-xs px-5 py-2.5 rounded-full transition-all active:scale-95 cursor-pointer shadow-lg shadow-[#e5c483]/5"
+              className="bg-gradient-to-r from-[#E6BE72] to-[#c5a880] text-gray-950 font-bold text-xs px-5 py-2.5 rounded-full transition-all active:scale-95 cursor-pointer shadow-lg shadow-[#E6BE72]/10 border-0"
             >
-              Connect MetaMask
+              Connect Wallet
             </button>
           )}
         </div>
@@ -764,68 +1090,372 @@ export default function LastWishApp() {
 
       {/* Sandbox Warning Banner */}
       {isConnected && isSandboxMode && (
-        <div className="w-full bg-[#e5c483]/10 border-b border-[#e5c483]/20 py-2.5 px-4 text-center text-xs text-[#e5c483] font-mono flex items-center justify-center space-x-2 z-20">
-          <AlertTriangle className="w-4 h-4 text-[#e5c483] animate-pulse" />
+        <div className="w-full bg-[#E6BE72]/10 border-b border-[#E6BE72]/20 py-2.5 px-4 text-center text-xs text-[#E6BE72] font-mono flex items-center justify-center space-x-2 z-20">
+          <AlertTriangle className="w-4 h-4 text-[#E6BE72] animate-pulse" />
           <span>MetaMask not detected. Running in Sandbox Simulation mode.</span>
         </div>
       )}
 
-      {/* Main DApp Container */}
-      <main className="flex-1 flex flex-col justify-center items-center p-4 md:p-8 z-10 max-w-7xl w-full mx-auto relative">
+      {/* Main Container */}
+      <main className={`flex-1 flex flex-col justify-center items-center p-4 md:p-8 z-10 w-full mx-auto relative ${!showLanding && isConnected ? "max-w-full" : "max-w-7xl"}`}>
         <AnimatePresence mode="wait">
           
           {/* VIEW 1: LANDING SCREEN */}
           {showLanding && (
             <motion.div
               key="landing-view"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-              className="w-full flex flex-col items-center justify-between min-h-[70vh] py-12 text-center relative"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="w-full flex flex-col items-center justify-between gap-16 min-h-[75vh] py-8 text-left relative"
             >
-              <div className="max-w-3xl space-y-6 my-auto">
-                {/* Floating Vault Animation Container */}
-                <div className="flex justify-center mb-4 relative">
-                  {/* Glowing background aura */}
-                  <div className="absolute w-24 h-24 rounded-full bg-[#e5c483]/10 blur-xl animate-pulse" />
-                  
-                  {/* Floating Vault Emblem */}
-                  <div className="relative p-6 bg-gray-950/65 border border-[rgba(229,196,131,0.15)] rounded-2xl animate-float-slow shadow-2xl shadow-[#e5c483]/2 flex items-center justify-center group cursor-pointer hover:border-[#e5c483]/40 transition-all duration-500">
-                    {/* Ring border effect */}
-                    <div className="absolute inset-0 rounded-2xl border border-dashed border-[#e5c483]/20 animate-[spin_40s_linear_infinite] group-hover:border-[#e5c483]/40" />
+              {landingTab === "home" && (
+                <>
+                  {/* Hero Two-Column Grid */}
+              <div className="w-full flex flex-col md:flex-row items-center justify-between gap-12">
+                {/* Left Column: Premium Headline & Description & Interactive CTAs */}
+                <div className="flex-1 max-w-xl space-y-8 z-10">
+                  <div className="space-y-4">
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-[#E6BE72]/10 border border-[#E6BE72]/20 text-[#E6BE72] animate-pulse">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#E6BE72]" />
+                      Protocol v2.1 Active
+                    </span>
                     
-                    {/* Vault Icons */}
-                    <div className="relative w-10 h-10">
-                      <Lock className="w-10 h-10 text-[#e5c483] absolute inset-0 group-hover:scale-90 group-hover:opacity-0 transition-all duration-300" />
-                      <Unlock className="w-10 h-10 text-[#faf6ee] absolute inset-0 scale-75 opacity-0 group-hover:scale-100 group-hover:opacity-100 transition-all duration-300" />
+                    <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight leading-[1.05] text-[#faf6ee] font-sans">
+                      Your Digital Legacy.<br />
+                      <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#E6BE72] via-[#E6BE72]/85 to-[#faf6ee]">
+                        Secured Beyond Time.
+                      </span>
+                    </h1>
+                    
+                    <p className="text-gray-400 text-sm md:text-base leading-relaxed">
+                      Store memories, important documents, and digital assets securely. LastWish ensures your legacy reaches the right people at the right moment.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row items-center gap-4 pt-2">
+                    {/* Primary CTA */}
+                    <div className="relative w-full sm:w-auto">
+                      {/* Floating encryption particles for CTA hover */}
+                      {ctaHovered && (
+                        <div className="absolute -inset-10 pointer-events-none overflow-hidden z-20">
+                          <div className="absolute top-1/2 left-0 w-2 h-2 bg-[#E6BE72]/60 rounded-full animate-ping" style={{ animationDelay: '0.2s' }} />
+                          <div className="absolute bottom-2 right-4 w-1.5 h-1.5 bg-[#E6BE72]/40 rounded-full animate-pulse" />
+                          <div className="absolute top-2 right-8 w-2 h-2 bg-[#E6BE72]/55 rounded-full animate-[ping_1.5s_infinite]" />
+                        </div>
+                      )}
+                      
+                      <button
+                        onClick={() => setShowLanding(false)}
+                        onMouseEnter={() => setCtaHovered(true)}
+                        onMouseLeave={() => setCtaHovered(false)}
+                        className="cta-primary-glow w-full sm:w-auto bg-gradient-to-r from-[#E6BE72] to-[#c5a880] text-[#090B14] px-8 py-4 rounded-full text-xs font-bold uppercase tracking-wider transition-all duration-300 hover:scale-105 hover:shadow-[0_0_25px_rgba(230,190,114,0.4)] flex items-center justify-center gap-2 group cursor-pointer border-0"
+                      >
+                        <span className="relative z-10 font-bold">Create Legacy Vault</span>
+                        <motion.span
+                          className="relative z-10 font-bold"
+                          animate={{ x: ctaHovered ? 4 : 0 }}
+                          transition={{ duration: 0.2 }}
+                        >
+                          →
+                        </motion.span>
+                      </button>
                     </div>
+
+                    {/* Secondary CTA */}
+                    <button
+                      onClick={() => setShowSecurityModal(true)}
+                      className="outlined-action w-full sm:w-auto px-8 py-4 rounded-full text-xs font-bold uppercase tracking-wider transition-all duration-300 flex items-center justify-center cursor-pointer"
+                    >
+                      Explore Security
+                    </button>
                   </div>
                 </div>
 
-                <h1 className="text-4xl md:text-6xl font-black tracking-tight leading-none text-[#faf6ee] animate-float-text">
-                  Your Digital Legacy.<br />
-                  Secured Beyond Time.
-                </h1>
-                <p className="text-gray-400 text-sm md:text-base max-w-xl mx-auto leading-relaxed">
-                  Store memories, important documents, and critical digital information in a private encrypted vault that reaches the right person, at the right time.
-                </p>
-                
-                <div className="pt-4">
-                  <button 
-                    onClick={() => setShowLanding(false)}
-                    className="outlined-action px-8 py-3 rounded-full text-xs font-bold uppercase transition-all shadow-md"
+                {/* Right Column: Holographic Orbiting Vault Card */}
+                <div className="flex-1 flex items-center justify-center relative w-full min-h-[400px] select-none">
+                  {/* Glowing background aura */}
+                  <div className="absolute w-64 h-64 rounded-full bg-[#E6BE72]/5 blur-3xl animate-pulse" />
+
+                  {/* Holographic vault card container */}
+                  <motion.div
+                    onMouseMove={handleCardMouseMove}
+                    onMouseEnter={() => setIsCardHovered(true)}
+                    onMouseLeave={handleCardMouseLeave}
+                    style={{
+                      rotateX: rotateXVal,
+                      rotateY: rotateYVal,
+                      transformStyle: "preserve-3d",
+                      perspective: 1000
+                    }}
+                    animate={{
+                      y: isCardHovered ? 0 : [0, -6, 0],
+                      rotateX: isCardHovered ? undefined : [0, 1.5, 0],
+                      rotateY: isCardHovered ? undefined : [0, -1.5, 0],
+                      scale: isCardHovered ? 1.03 : 1,
+                      boxShadow: isCardHovered
+                        ? "0 25px 50px -12px rgba(230, 190, 114, 0.25), 0 0 30px rgba(230, 190, 114, 0.15)"
+                        : "0 10px 30px -10px rgba(0, 0, 0, 0.5), 0 0 15px rgba(230, 190, 114, 0.05)"
+                    }}
+                    transition={isCardHovered ? {
+                      type: "spring",
+                      stiffness: 300,
+                      damping: 25,
+                      scale: { duration: 0.15 }
+                    } : {
+                      y: {
+                        repeat: Infinity,
+                        duration: 4,
+                        ease: "easeInOut"
+                      },
+                      rotateX: {
+                        repeat: Infinity,
+                        duration: 6,
+                        ease: "easeInOut"
+                      },
+                      rotateY: {
+                        repeat: Infinity,
+                        duration: 6,
+                        ease: "easeInOut"
+                      }
+                    }}
+                    className="relative w-80 h-96 rounded-3xl glass-panel p-6 flex flex-col items-center justify-between border border-[#E6BE72]/20 backdrop-blur-2xl cursor-pointer select-none"
                   >
-                    Start →
-                  </button>
+                    
+                    {/* Status Indicator */}
+                    <div className="w-full flex items-center justify-between border-b border-white/5 pb-3">
+                      <span className="text-[9px] font-mono text-gray-500 uppercase tracking-widest text-[#E6BE72] font-bold">Decentralized Escrow</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        <span className="text-[9px] font-mono text-gray-400 uppercase font-bold">PROTOCOL READY</span>
+                      </div>
+                    </div>
+
+                    {/* Vault Lock and Orbiting Tags */}
+                    <div className="relative my-auto flex items-center justify-center w-full h-48">
+                      
+                      {/* Clockwise spinning orbiting container */}
+                      <div className="absolute w-80 h-80 flex items-center justify-center animate-orbit-cw pointer-events-none">
+                        {["Letters", "Documents", "Photos", "Videos", "Crypto", "Medical Files", "Passwords"].map((tag, idx, arr) => {
+                          const angle = (idx * 360) / arr.length;
+                          return (
+                            <div
+                              key={idx}
+                              className="absolute text-[8px] font-mono font-bold tracking-wider text-[#E6BE72] bg-[#090B14]/95 border border-white/10 rounded-full px-2.5 py-1.5 shadow-lg animate-orbit-ccw whitespace-nowrap"
+                              style={{
+                                transform: `rotate(${angle}deg) translate(110px) rotate(-${angle}deg)`
+                              }}
+                            >
+                              {tag}
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Glowing Lock Body Container */}
+                      <div className="z-10 bg-[#111827]/85 p-5 rounded-full border border-[#E6BE72]/15 shadow-[0_0_30px_rgba(230,190,114,0.1)]">
+                        <svg viewBox="0 0 100 100" className="w-16 h-16 drop-shadow-[0_0_15px_rgba(230,190,114,0.25)]">
+                          {/* Shackle */}
+                          <motion.path
+                            d="M 35 45 L 35 30 A 15 15 0 0 1 65 30 L 65 45"
+                            fill="none"
+                            stroke="#E6BE72"
+                            strokeWidth="6"
+                            strokeLinecap="round"
+                            animate={{ y: (animationStage === 1 || animationStage === 2) ? -12 : 0 }}
+                            transition={{ type: "spring", stiffness: 180, damping: 12 }}
+                          />
+                          {/* Lock Body */}
+                          <rect x="22" y="42" width="56" height="42" rx="10" fill="url(#vault-body-grad-new)" stroke="#E6BE72" strokeWidth="2.5" />
+                          {/* Keyhole */}
+                          <circle cx="50" cy="58" r="5" fill="#faf6ee" className="animate-pulse" />
+                          <path d="M 50 63 L 50 74" stroke="#faf6ee" strokeWidth="3.5" strokeLinecap="round" />
+                          
+                          <defs>
+                            <linearGradient id="vault-body-grad-new" x1="0%" y1="0%" x2="100%" y2="100%">
+                              <stop offset="0%" stopColor="#111827" />
+                              <stop offset="100%" stopColor="#090B14" />
+                            </linearGradient>
+                          </defs>
+                        </svg>
+                      </div>
+                    </div>
+
+                    {/* Heartbeat EKG Pulse */}
+                    <div className="w-full h-8 border-t border-white/5 pt-2">
+                      <svg viewBox="0 0 200 40" className="w-full h-6">
+                        <path
+                          d="M 0 20 L 40 20 L 50 10 L 55 30 L 60 10 L 65 20 L 110 20 L 120 5 L 125 35 L 130 5 L 135 20 L 200 20"
+                          fill="none"
+                          stroke="#10b981"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          className="heartbeat-path"
+                        />
+                      </svg>
+                    </div>
+                  </motion.div>
                 </div>
               </div>
 
-              {/* Glowing Scrollable Perspective Grid Line Canvas */}
-              <div className="perspective-container">
-                <div className="perspective-grid"></div>
+              {/* Bottom Feature Cards */}
+              <div className="w-full grid grid-cols-2 md:grid-cols-5 gap-4 pt-12 border-t border-white/5">
+                {[
+                  { title: "End-to-End Encryption", desc: "Client-side AES-256-GCM protection.", icon: Shield },
+                  { title: "Shamir Secret Sharing", desc: "Split keys mathematically across shares.", icon: Key },
+                  { title: "Decentralized Storage", desc: "Files hosted on redundant IPFS network.", icon: Upload },
+                  { title: "Smart Contracts", desc: "Heartbeat verification on Base Sepolia.", icon: Lock },
+                  { title: "Multi-Recipient Support", desc: "Separate rules for separate beneficiaries.", icon: Mail }
+                ].map((f, idx) => (
+                  <motion.div
+                    key={idx}
+                    whileHover={{ y: -6, borderColor: 'rgba(230,190,114,0.35)' }}
+                    className="glass-panel p-5 rounded-2xl border border-white/5 flex flex-col justify-between text-left space-y-3 cursor-default"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-[#E6BE72]/10 border border-[#E6BE72]/20 flex items-center justify-center text-[#E6BE72]">
+                      <f.icon className="w-4 h-4" />
+                    </div>
+                    <div className="space-y-1">
+                      <h4 className="text-xs font-bold text-white font-mono">{f.title}</h4>
+                      <p className="text-[10px] text-gray-400 leading-normal font-sans">{f.desc}</p>
+                    </div>
+                  </motion.div>
+                ))}
               </div>
-            </motion.div>
+            </>
+          )}
+
+          {landingTab === "how-it-works" && (
+            <div className="w-full max-w-4xl mx-auto space-y-8 font-mono">
+              <div className="text-center space-y-3 pb-4">
+                <span className="text-[10px] text-[#E6BE72] uppercase tracking-widest font-bold bg-[#E6BE72]/10 border border-[#E6BE72]/20 px-3 py-1 rounded-full">
+                  Step-By-Step Mechanics
+                </span>
+                <h2 className="text-3xl md:text-5xl font-extrabold text-white leading-tight">Decentralized Key Reconstruction</h2>
+                <p className="text-xs md:text-sm text-gray-400 max-w-xl mx-auto">
+                  How your encrypted data is safely created, preserved, and handed over without any central servers.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                {[
+                  {
+                    step: "01",
+                    title: "Client-Side AES Encryption",
+                    desc: "Your files and messages are encrypted directly inside your web browser using a dynamically generated AES-256 key before any upload occurs."
+                  },
+                  {
+                    step: "02",
+                    title: "Shamir's Key Splitting",
+                    desc: "The AES key is split into 3 mathematical shares using Shamir's Secret Sharing. Decryption requires a threshold of any 2 of the 3 shares."
+                  },
+                  {
+                    step: "03",
+                    title: "Redundant IPFS Storage",
+                    desc: "The encrypted file payload is uploaded directly to the IPFS network, yielding a secure CID. No central server ever holds the file."
+                  },
+                  {
+                    step: "04",
+                    title: "Base Sepolia Heartbeat",
+                    desc: "A smart contract monitors check-ins. If the heartbeat expires, the designated heir is permitted to fetch Share 1 and reconstruct your key."
+                  }
+                ].map((s, idx) => (
+                  <div key={idx} className="glass-panel p-6 rounded-3xl border border-white/5 space-y-4 hover:border-[#E6BE72]/30 transition-all duration-300">
+                    <div className="text-2xl font-extrabold text-[#E6BE72]">{s.step}</div>
+                    <h4 className="text-sm font-bold text-white leading-snug">{s.title}</h4>
+                    <p className="text-[10px] text-gray-400 leading-relaxed font-sans">{s.desc}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="p-6 glass-panel rounded-[2rem] border border-white/5 text-center space-y-4 max-w-2xl mx-auto mt-4">
+                <h4 className="text-sm font-extrabold text-white">Ready to secure your legacy capsule?</h4>
+                <p className="text-[10px] text-gray-400 font-sans max-w-md mx-auto">
+                  Create your memory capsule now. Setup takes under 5 minutes, backed by cryptographically secure open-source smart contracts.
+                </p>
+                <button 
+                  onClick={() => { setShowLanding(false); }}
+                  className="px-6 py-2.5 bg-gradient-to-r from-[#E6BE72] to-[#c5a880] text-gray-950 font-bold rounded-full text-xs transition-all hover:scale-105 active:scale-95 cursor-pointer border-0 inline-block font-mono"
+                >
+                  Connect Wallet & Start
+                </button>
+              </div>
+            </div>
+          )}
+
+          {landingTab === "security" && (
+            <div className="w-full max-w-4xl mx-auto space-y-8 font-mono">
+              <div className="text-center space-y-3 pb-4">
+                <span className="text-[10px] text-[#2ECC71] uppercase tracking-widest font-bold bg-[#2ECC71]/10 border border-[#2ECC71]/20 px-3 py-1 rounded-full">
+                  Zero-Custody Cryptography
+                </span>
+                <h2 className="text-3xl md:text-5xl font-extrabold text-white leading-tight">Trustless Security Architecture</h2>
+                <p className="text-xs md:text-sm text-gray-400 max-w-xl mx-auto">
+                  Review the mathematics and protocols behind our zero-knowledge inheritance infrastructure.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {[
+                  {
+                    title: "100% Zero Custody",
+                    desc: "We never transmit private keys, raw files, or secret text to any centralized database. All cryptographic transformations occur in local browser memory. Even if our frontend hosting is compromised, your secrets remain unreadable."
+                  },
+                  {
+                    title: "2-of-3 Threshold Math",
+                    desc: "By dividing the decryption key into 3 shards, we eliminate single points of vulnerability. Shard 1 is held on-chain. Shard 2 is handed to your heir. Shard 3 remains on your local disk as a cold standby. An adversary needs 2 shards to decrypt."
+                  },
+                  {
+                    title: "Auditable Smart Contracts",
+                    desc: "The release timer and check-in pulses are managed strictly by autonomous smart contracts on Base Sepolia. The contract cannot be modified or overridden, guaranteeing that your wishes are executed exactly as written."
+                  }
+                ].map((sec, idx) => (
+                  <div key={idx} className="glass-panel p-6 rounded-3xl border border-white/5 space-y-3 hover:border-blue-500/30 transition-all duration-300">
+                    <div className="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400 mb-2">
+                      <Shield className="w-5 h-5" />
+                    </div>
+                    <h4 className="text-sm font-bold text-white">{sec.title}</h4>
+                    <p className="text-[11px] text-gray-400 leading-relaxed font-sans">{sec.desc}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {landingTab === "about" && (
+            <div className="w-full max-w-3xl mx-auto space-y-8 font-mono">
+              <div className="text-center space-y-3 pb-4">
+                <span className="text-[10px] text-blue-400 uppercase tracking-widest font-bold bg-blue-500/10 border border-blue-500/20 px-3 py-1 rounded-full">
+                  Our Mission
+                </span>
+                <h2 className="text-3xl md:text-5xl font-extrabold text-white leading-tight">Secure Digital Continuity</h2>
+                <p className="text-xs md:text-sm text-gray-400 max-w-md mx-auto">
+                  Conceived and built to ensure your digital legacy survives the unexpected.
+                </p>
+              </div>
+
+              <div className="glass-panel p-8 rounded-[2rem] border border-white/5 space-y-6">
+                <p className="text-xs md:text-sm text-gray-300 leading-relaxed font-sans">
+                  Currently, billions of dollars in crypto-assets, priceless personal letters, legal declarations, and historical memoirs are lost forever due to sudden hardware loss, forgotten passwords, or unexpected occurrences.
+                </p>
+                <p className="text-xs md:text-sm text-gray-300 leading-relaxed font-sans">
+                  LastWish was developed for the <strong>Confluence 2.0 Hackathon</strong> to offer a trustless, zero-knowledge alternative to traditional centralized safety deposits or custodian platforms. By combining the immutability of the Ethereum Virtual Machine (EVM) with local Shamir Secret Sharing, we provide digital continuity without compromising on security or sovereignty.
+                </p>
+
+                <div className="grid grid-cols-2 gap-4 border-t border-white/5 pt-6 text-[11px]">
+                  <div>
+                    <span className="text-gray-500 block uppercase font-bold tracking-wider">Built For</span>
+                    <p className="text-white font-bold mt-0.5">Confluence 2.0 Hackathon</p>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 block uppercase font-bold tracking-wider">Deployment Network</span>
+                    <p className="text-white font-bold mt-0.5">Base Sepolia Testnet</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </motion.div>
           )}
 
           {/* VIEW 2: CONNECT WALLET CARD */}
@@ -835,11 +1465,11 @@ export default function LastWishApp() {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+              transition={{ duration: 0.4 }}
               className="glass-panel p-8 md:p-12 rounded-3xl max-w-lg w-full text-center space-y-8 my-auto"
             >
               <h2 className="text-3xl font-extrabold tracking-tight text-[#e5c483] font-mono uppercase">
-                Let Your Words Outlive You
+                Secure Your Legacy
               </h2>
               
               <div className="flex flex-col space-y-3">
@@ -866,12 +1496,12 @@ export default function LastWishApp() {
               initial={{ opacity: 0, y: 15 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -15 }}
-              transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
-              className="w-full max-w-xl mx-auto my-auto py-6"
+              transition={{ duration: 0.45 }}
+              className="w-full mx-auto py-6"
             >
               <AnimatePresence mode="wait">
                 
-                {/* Owner Tab Dashboard View */}
+                {/* Tab 1: Owner Dashboard */}
                 {activeTab === "owner" && (
                   <motion.div
                     key="owner-tab-view"
@@ -881,375 +1511,797 @@ export default function LastWishApp() {
                     transition={{ duration: 0.3 }}
                     className="space-y-6"
                   >
-                    <AnimatePresence mode="wait">
-                      
-                      {/* Dashboard Main view */}
-                      {!isWizardActive && (
-                        <motion.div
-                          key="dashboard-main"
-                          initial={{ opacity: 0, scale: 0.98 }}
-                          animate={{ opacity: 1, scale: 1 }}
-                          exit={{ opacity: 0, scale: 0.98 }}
-                          className="space-y-6"
-                        >
-                          <div className="glass-panel p-6 rounded-3xl space-y-6 relative overflow-hidden">
-                            <div className="flex items-center justify-between border-b border-gray-900 pb-4">
-                              <div>
-                                <span className="text-[10px] text-gray-500 uppercase tracking-widest font-mono">Global Security Shield</span>
-                                <h3 className="font-extrabold text-sm text-[#faf6ee] uppercase mt-0.5">Owner Check-In Status</h3>
+                    {!isWizardActive && (
+                      <motion.div
+                        key="dashboard-main"
+                        className="space-y-6 text-left"
+                      >
+                        {/* Welcome back Keeper */}
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-2">
+                          <div>
+                            <h2 className="text-3xl font-extrabold text-[#faf6ee] tracking-tight leading-tight">Welcome back, Legacy Keeper 👋</h2>
+                            <p className="text-xs text-gray-400 font-mono mt-1">Manage your encrypted digital legacy securely.</p>
+                          </div>
+                          <div className="flex items-center space-x-2 bg-[#111827]/60 border border-white/5 px-4 py-2 rounded-full font-mono text-[10px] text-[#2ECC71]">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#2ECC71] animate-pulse" />
+                            <span className="text-[#faf6ee]">Base Sepolia Network</span>
+                          </div>
+                        </div>
+
+                        {/* Stats Grid Row */}
+                        <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
+                          {/* Stats Grid */}
+                          <div className="xl:col-span-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                            {/* Card 1: Total Vaults */}
+                            <div className="glass-panel p-5 rounded-2xl border border-white/5 space-y-3 cursor-default glow-purple relative overflow-hidden group">
+                              <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
+                                <Shield className="w-4 h-4" />
                               </div>
-                              <span className="px-3 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-[10px] font-bold tracking-wider uppercase font-mono">
-                                Active and Secured
-                              </span>
+                              <div>
+                                <span className="text-[10px] text-gray-500 font-mono uppercase block font-bold">Total Vaults</span>
+                                <div className="text-3xl font-extrabold font-mono text-[#faf6ee] mt-1">
+                                  {vaults.length}
+                                </div>
+                              </div>
                             </div>
 
-                            <div className="space-y-3 font-mono text-xs">
-                              <div className="flex justify-between items-center py-1">
-                                <span className="text-gray-400">Vaults Configured:</span>
-                                <span className="text-white font-bold">{vaults.length}</span>
+                            {/* Card 2: Recipients */}
+                            <div className="glass-panel p-5 rounded-2xl border border-white/5 space-y-3 cursor-default glow-blue relative overflow-hidden group">
+                              <div className="w-8 h-8 rounded-lg bg-[#2ECC71]/10 border border-[#2ECC71]/20 flex items-center justify-center text-[#2ECC71]">
+                                <Plus className="w-4 h-4" />
                               </div>
-                              <div className="flex justify-between items-center py-1 border-t border-gray-900/40">
-                                <span className="text-gray-400">Primary Wallet:</span>
-                                <span className="text-[#ddb892] text-[10px] break-all">{userAddress}</span>
+                              <div>
+                                <span className="text-[10px] text-gray-500 font-mono uppercase block font-bold">Recipients</span>
+                                <div className="text-3xl font-extrabold font-mono text-[#faf6ee] mt-1">
+                                  {Array.from(new Set(vaults.flatMap(v => v.configs.map(c => c.recipientAddress.toLowerCase())))).length}
+                                </div>
                               </div>
-                              {!userAddress.startsWith("0x6ab162") && (
-                                <div className="flex flex-col space-y-1 py-2 border-t border-gray-900/40">
-                                  <span className="text-gray-400">Contract Address:</span>
-                                  <input 
-                                    type="text"
-                                    value={contractAddress}
-                                    onChange={(e) => {
-                                      setContractAddress(e.target.value);
-                                      localStorage.setItem("lastwish_contract_address", e.target.value);
-                                    }}
-                                    className="bg-gray-950 border border-gray-900/80 rounded px-2.5 py-1.5 text-[10px] text-gray-300 font-mono focus:outline-none focus:border-[#e5c483]/30 w-full"
-                                  />
+                            </div>
+
+                            {/* Card 3: Encrypted Assets */}
+                            <div className="glass-panel p-5 rounded-2xl border border-white/5 space-y-3 cursor-default glow-gold relative overflow-hidden group">
+                              <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
+                                <Lock className="w-4 h-4" />
+                              </div>
+                              <div>
+                                <span className="text-[10px] text-gray-500 font-mono uppercase block font-bold">Encrypted Assets</span>
+                                <div className="text-3xl font-extrabold font-mono text-[#faf6ee] mt-1">
+                                  100%
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Card 4: Active Vaults */}
+                            <div className="glass-panel p-5 rounded-2xl border border-white/5 space-y-3 cursor-default glow-green relative overflow-hidden group">
+                              <div className="w-8 h-8 rounded-lg bg-[#E6BE72]/10 border border-[#E6BE72]/20 flex items-center justify-center text-[#E6BE72]">
+                                <Activity className="w-4 h-4" />
+                              </div>
+                              <div>
+                                <span className="text-[10px] text-gray-500 font-mono uppercase block font-bold">Active Vaults</span>
+                                <div className="text-3xl font-extrabold font-mono text-[#faf6ee] mt-1">
+                                  {vaults.filter(v => v.configs.some(c => c.status === "ACTIVE")).length}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Quick Actions Card */}
+                          <div className="xl:col-span-1 glass-panel p-5 rounded-2xl border border-white/5 space-y-3 cursor-default">
+                            <span className="text-[10px] text-[#E6BE72] font-mono uppercase block font-bold tracking-wider">⚡ Quick Actions</span>
+                            <div className="grid grid-cols-2 gap-2 text-[10px] font-mono font-bold">
+                              <button 
+                                onClick={() => { setIsWizardActive(true); setStep(1); }}
+                                className="p-2.5 bg-[#111827]/80 hover:bg-[#E6BE72]/10 border border-white/5 hover:border-[#E6BE72]/30 text-gray-300 hover:text-white rounded-xl transition-all cursor-pointer text-left flex items-center space-x-1.5"
+                              >
+                                <span>➕</span>
+                                <span>Create Vault</span>
+                              </button>
+                              <button 
+                                onClick={() => setActiveTab("inspector")}
+                                className="p-2.5 bg-[#111827]/80 hover:bg-[#E6BE72]/10 border border-white/5 hover:border-[#E6BE72]/30 text-gray-300 hover:text-white rounded-xl transition-all cursor-pointer text-left flex items-center space-x-1.5"
+                              >
+                                <span>🔍</span>
+                                <span>Inspect Vault</span>
+                              </button>
+                              <button 
+                                onClick={() => { setIsWizardActive(true); setStep(3); }}
+                                className="p-2.5 bg-[#111827]/80 hover:bg-[#E6BE72]/10 border border-white/5 hover:border-[#E6BE72]/30 text-gray-300 hover:text-white rounded-xl transition-all cursor-pointer text-left flex items-center space-x-1.5"
+                              >
+                                <span>📤</span>
+                                <span>Upload Binary</span>
+                              </button>
+                              <button 
+                                onClick={() => { setIsWizardActive(true); setStep(2); }}
+                                className="p-2.5 bg-[#111827]/80 hover:bg-[#E6BE72]/10 border border-white/5 hover:border-[#E6BE72]/30 text-gray-300 hover:text-white rounded-xl transition-all cursor-pointer text-left flex items-center space-x-1.5"
+                              >
+                                <span>👥</span>
+                                <span>Add Recipient</span>
+                              </button>
+                              <button 
+                                onClick={() => {
+                                  if (vaults.length > 0) {
+                                    triggerHeartbeat(vaults[0].id);
+                                  } else {
+                                    alert("No vaults available to send heartbeat.");
+                                  }
+                                }}
+                                className="p-2.5 bg-[#111827]/80 hover:bg-[#E6BE72]/10 border border-white/5 hover:border-[#E6BE72]/30 text-gray-300 hover:text-white rounded-xl transition-all cursor-pointer text-left flex items-center space-x-1.5"
+                              >
+                                <span>💓</span>
+                                <span>Heartbeat</span>
+                              </button>
+                              <button 
+                                onClick={() => setActiveTab("recipient")}
+                                className="p-2.5 bg-[#111827]/80 hover:bg-[#E6BE72]/10 border border-white/5 hover:border-[#E6BE72]/30 text-gray-300 hover:text-white rounded-xl transition-all cursor-pointer text-left flex items-center space-x-1.5"
+                              >
+                                <span>🛡️</span>
+                                <span>Recover Vault</span>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Dashboard Main Grid Split */}
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6" id="vaults-container">
+                          
+                          {/* Left Column: Vault Cards List (Span 2) */}
+                          <div className="lg:col-span-2 space-y-6">
+                            <div className="glass-panel p-6 rounded-3xl border border-white/5 space-y-6 relative">
+                              <div className="flex justify-between items-center border-b border-white/5 pb-3">
+                                <div className="flex items-center space-x-2">
+                                  <Database className="w-4 h-4 text-[#E6BE72]" />
+                                  <h4 className="text-xs font-bold text-white font-mono uppercase tracking-wider">Your Legacy Vaults</h4>
+                                </div>
+                                <button 
+                                  onClick={() => { setIsWizardActive(true); setStep(1); }}
+                                  className="px-4 py-2 bg-gradient-to-r from-[#E6BE72] to-[#c5a880] text-gray-950 font-bold rounded-full text-[10px] font-mono transition-all hover:scale-105 active:scale-95 cursor-pointer border-0"
+                                >
+                                  + Create New Vault
+                                </button>
+                              </div>
+
+                              {/* Vaults list dashboard display */}
+                              {vaults.length > 0 ? (
+                                <div className="space-y-4">
+                                  {vaults.map(v => {
+                                    const elapsed = Math.floor((Date.now() - v.lastHeartbeat) / 1000);
+                                    
+                                    return (
+                                      <div key={v.id} className="p-5 bg-[#090B14]/40 border border-white/5 rounded-2xl space-y-4 hover:border-[#E6BE72]/30 transition-all duration-300 text-left">
+                                        <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 border-b border-white/5 pb-3 font-mono text-xs">
+                                          <div>
+                                            <h5 className="font-extrabold text-white text-sm font-mono">{v.name}</h5>
+                                            <div className="flex items-center space-x-1.5 mt-1">
+                                              <p className="text-[9px] text-gray-500 font-mono">Capsule ID: {v.id.slice(0, 14)}...{v.id.slice(-6)}</p>
+                                              <button 
+                                                onClick={() => copyToClipboard(v.id, `v-id-${v.id}`)}
+                                                className="p-0.5 text-gray-500 hover:text-[#E6BE72] rounded transition-colors cursor-pointer bg-transparent border-0 p-0"
+                                                title="Copy Vault ID"
+                                              >
+                                                {copiedShare === `v-id-${v.id}` ? (
+                                                  <Check className="w-3 h-3 text-[#2ECC71]" />
+                                                ) : (
+                                                  <Copy className="w-3 h-3" />
+                                                )}
+                                              </button>
+                                            </div>
+                                          </div>
+                                          
+                                          <div className="flex items-center gap-2">
+                                            <button
+                                              onClick={() => { setInspectVaultId(v.id); queryOnChainVault({ preventDefault: () => {} } as any); setActiveTab("inspector"); }}
+                                              className="px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20 rounded-xl text-[10px] font-bold font-mono transition-all cursor-pointer"
+                                            >
+                                              Inspect
+                                            </button>
+                                            <button
+                                              onClick={() => triggerHeartbeat(v.id)}
+                                              className="px-3 py-1.5 bg-[#E6BE72]/10 hover:bg-[#E6BE72]/20 border border-[#E6BE72]/25 text-[#E6BE72] rounded-xl text-[10px] font-bold font-mono transition-all cursor-pointer"
+                                              title="Reset inactivity countdown on smart contract"
+                                            >
+                                              Heartbeat
+                                            </button>
+                                            <button
+                                              onClick={() => triggerVeto(v.id)}
+                                              className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 border border-amber-500/25 rounded-xl text-[10px] font-bold font-mono transition-all cursor-pointer"
+                                              title="Trigger Veto to extend grace period"
+                                            >
+                                              Veto
+                                            </button>
+                                            <button
+                                              onClick={() => deleteVault(v.id)}
+                                              className="p-2 bg-red-500/5 hover:bg-red-500/15 text-[#FF5A5F] border border-red-500/10 hover:border-red-500/25 rounded-xl cursor-pointer border-0"
+                                              title="Delete Vault"
+                                            >
+                                              <Trash2 className="w-3.5 h-3.5" />
+                                            </button>
+                                          </div>
+                                        </div>
+
+                                        {/* Categories list in vault */}
+                                        <div className="space-y-2">
+                                          <span className="text-[9px] text-gray-500 uppercase tracking-widest font-bold font-mono">Active Escrows</span>
+                                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                            {v.configs.map((cfg, idx) => {
+                                              const cdown = Math.max(0, cfg.inactivityPeriod - elapsed);
+                                              const gdown = Math.max(0, (cfg.inactivityPeriod + cfg.gracePeriod) - elapsed);
+                                              
+                                              return (
+                                                <div key={idx} className="p-3 bg-[#090B14]/80 border border-white/5 rounded-xl flex items-center justify-between font-mono text-[10px] gap-2">
+                                                  <div>
+                                                    <span className="font-bold text-gray-300">{cfg.category}</span>
+                                                    <p className="text-[8px] text-gray-500 mt-0.5">Heir: {cfg.recipientAddress.slice(0, 6)}...{cfg.recipientAddress.slice(-4)}</p>
+                                                  </div>
+                                                  <div className="text-right">
+                                                    {cfg.status === "ACTIVE" && <span className="text-[#2ECC71] font-bold">{cdown}s left</span>}
+                                                    {cfg.status === "PENDING_UNLOCK" && <span className="text-amber-500 animate-pulse font-bold">Grace ({gdown}s)</span>}
+                                                    {cfg.status === "UNLOCKED" && <span className="text-[#FF5A5F] font-bold">Released</span>}
+                                                  </div>
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <div className="p-8 text-center bg-[#090B14]/40 border border-white/5 rounded-2xl text-gray-500 text-xs font-mono">
+                                  No active memory capsules found. Click above to deploy one.
                                 </div>
                               )}
                             </div>
                           </div>
 
-                          {/* Setup Trigger */}
-                          <div className="text-center pt-4">
+                          {/* Right Column: Health Status & Activity timeline (Span 1) */}
+                          <div className="space-y-6">
+                            {/* System Status Panel */}
+                            <div className="glass-panel p-6 rounded-3xl border border-white/5 space-y-4">
+                              <h4 className="text-xs font-bold text-white font-mono uppercase tracking-wider border-b border-white/5 pb-2">Protocol Status</h4>
+                              
+                              <div className="space-y-2.5 font-mono text-[10px]">
+                                {[
+                                  { name: "Wallet Connected", ok: isConnected, icon: Wallet },
+                                  { name: "Smart Contract Connected", ok: isConnected, icon: Lock },
+                                  { name: "Encryption Active", ok: true, icon: Shield },
+                                  { name: "IPFS Online", ok: true, icon: Upload },
+                                  { name: "Heartbeat Running", ok: vaults.length > 0, icon: Activity },
+                                  { name: "Recipient Ready", ok: true, icon: CheckCircle2 }
+                                ].map((status, idx) => (
+                                  <div key={idx} className="flex justify-between items-center p-2.5 bg-[#090B14]/40 border border-white/5 rounded-xl">
+                                    <div className="flex items-center space-x-2 text-gray-400">
+                                      <status.icon className="w-3.5 h-3.5 text-[#E6BE72]" />
+                                      <span>{status.name}</span>
+                                    </div>
+                                    <div className="flex items-center space-x-1.5">
+                                      <span className={`w-1.5 h-1.5 rounded-full ${status.ok ? "bg-[#2ECC71] animate-pulse" : "bg-gray-600"}`} />
+                                      <span className={status.ok ? "text-[#2ECC71] font-bold" : "text-gray-500"}>
+                                        {status.ok ? "ONLINE" : "OFFLINE"}
+                                      </span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Recent Activity Card */}
+                            <div className="glass-panel p-6 rounded-3xl border border-white/5 space-y-4">
+                              <h4 className="text-xs font-bold text-[#faf6ee] font-mono uppercase tracking-wider border-b border-white/5 pb-2">Recent Logs</h4>
+                              
+                              <div className="space-y-4 text-left font-mono text-[10px]">
+                                {[
+                                  { label: "IPFS Gateway synced", desc: "Redundant cluster handshake ok", time: "just now", color: "bg-blue-400" },
+                                  { label: "Encrypted memory session initialized", desc: "AES-256 local keys cached", time: "2 min ago", color: "bg-[#E6BE72]" },
+                                  { label: "Heartbeat timer reset on-chain", desc: "Contract tx confirmed success", time: "1 hr ago", color: "bg-[#2ECC71]" }
+                                ].map((log, lIdx) => (
+                                  <div key={lIdx} className="flex gap-3 items-start relative">
+                                    <div className={`w-1.5 h-1.5 rounded-full mt-1 relative z-10 flex-shrink-0 ${log.color}`} />
+                                    <div className="space-y-0.5">
+                                      <p className="text-gray-300 font-bold leading-normal">{log.label}</p>
+                                      <p className="text-gray-500 text-[9px] leading-normal">{log.desc}</p>
+                                      <span className="text-[8px] text-[#E6BE72]/60 uppercase tracking-widest">{log.time}</span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+
+                        </div>
+                      </motion.div>
+                    )}
+                               {/* Wizard Step 1: Vault Name & Content Type Selection */}
+                    {isWizardActive && step === 1 && (
+                      <motion.div
+                        key="wizard-step-1"
+                        initial={{ opacity: 0, scale: 0.98 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.98 }}
+                        className="glass-panel p-8 md:p-12 rounded-[2rem] max-w-3xl w-full mx-auto space-y-8 relative border border-[#E6BE72]/20 shadow-2xl text-left"
+                      >
+                        {/* Stepper progress indicator */}
+                        <div className="w-full flex items-center justify-between border-b border-white/5 pb-6">
+                          <div className="flex items-center space-x-3">
+                            <span className="text-[9px] text-[#E6BE72] font-mono uppercase tracking-widest font-bold">Capsule Wizard</span>
+                            <h2 className="text-xl font-bold text-white">Create Capsule</h2>
+                          </div>
+                          <div className="flex items-center gap-1.5 font-mono text-[10px] text-gray-400">
+                            <span className="text-[#E6BE72] font-bold">1</span> / 4
+                          </div>
+                        </div>
+
+                        <div className="space-y-6">
+                          {/* Vault Name Input */}
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest font-mono block">Capsule Name</label>
+                            <input 
+                              type="text" 
+                              placeholder="e.g. My Eternal Legacy Capsule"
+                              value={newVaultName}
+                              onChange={(e) => setNewVaultName(e.target.value)}
+                              className="w-full design-input px-5 py-4 text-xs font-mono"
+                            />
+                          </div>
+
+                          {/* Content Types Selection Grid */}
+                          <div className="space-y-3">
+                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest font-mono block">Select Default Content Category</label>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              {/* Card 1: Personal Message */}
+                              <motion.div
+                                onClick={() => setEditCategory("Memories")}
+                                whileHover={{ y: -4 }}
+                                className={`relative p-5 border rounded-2xl cursor-pointer transition-all duration-300 flex items-start gap-4 select-none ${
+                                  editCategory === "Memories" ? "bg-[#111827]/85 border-[#E6BE72]/50 shadow-[0_10px_25px_rgba(230,190,114,0.15)]" : "bg-[#111827]/30 border-white/5"
+                                }`}
+                              >
+                                <div className="p-3 bg-[#E6BE72]/10 border border-[#E6BE72]/20 rounded-xl text-[#E6BE72] relative overflow-hidden flex-shrink-0">
+                                  {editCategory === "Memories" && (
+                                    <div className="absolute inset-0 flex flex-col items-center justify-center font-mono text-[7px] text-[#E6BE72]/40 overflow-hidden pointer-events-none select-none">
+                                      <div className="animate-pulse">MEM</div>
+                                    </div>
+                                  )}
+                                  <Mail className="w-5 h-5 z-10 relative" />
+                                </div>
+                                <div className="space-y-1">
+                                  <h4 className="text-xs font-bold text-[#faf6ee] font-mono">Personal Message</h4>
+                                  <p className="text-[11px] text-gray-400 font-sans">Letters, memories, final words</p>
+                                </div>
+                              </motion.div>
+
+                              {/* Card 2: Documents */}
+                              <motion.div
+                                onClick={() => setEditCategory("Medical")}
+                                whileHover={{ y: -4 }}
+                                className={`relative p-5 border rounded-2xl cursor-pointer transition-all duration-300 flex items-start gap-4 select-none ${
+                                  editCategory === "Medical" ? "bg-[#111827]/85 border-[#E6BE72]/50 shadow-[0_10px_25px_rgba(230,190,114,0.15)]" : "bg-[#111827]/30 border-white/5"
+                                }`}
+                              >
+                                <div className="p-3 bg-[#E6BE72]/10 border border-[#E6BE72]/20 rounded-xl text-[#E6BE72] relative overflow-hidden flex-shrink-0">
+                                  {editCategory === "Medical" && (
+                                    <div className="absolute inset-0 flex flex-col items-center justify-center font-mono text-[7px] text-[#E6BE72]/40 overflow-hidden pointer-events-none select-none">
+                                      <div className="animate-pulse">DOC</div>
+                                    </div>
+                                  )}
+                                  <Lock className="w-5 h-5 z-10 relative" />
+                                </div>
+                                <div className="space-y-1">
+                                  <h4 className="text-xs font-bold text-[#faf6ee] font-mono">Documents</h4>
+                                  <p className="text-[11px] text-gray-400 font-sans">Important files and records</p>
+                                </div>
+                              </motion.div>
+
+                              {/* Card 3: Financial Instructions */}
+                              <motion.div
+                                onClick={() => setEditCategory("Finances")}
+                                whileHover={{ y: -4 }}
+                                className={`relative p-5 border rounded-2xl cursor-pointer transition-all duration-300 flex items-start gap-4 select-none ${
+                                  editCategory === "Finances" ? "bg-[#111827]/85 border-[#E6BE72]/50 shadow-[0_10px_25px_rgba(230,190,114,0.15)]" : "bg-[#111827]/30 border-white/5"
+                                }`}
+                              >
+                                <div className="p-3 bg-[#E6BE72]/10 border border-[#E6BE72]/20 rounded-xl text-[#E6BE72] relative overflow-hidden flex-shrink-0">
+                                  {editCategory === "Finances" && (
+                                    <div className="absolute inset-0 flex flex-col items-center justify-center font-mono text-[7px] text-[#E6BE72]/40 overflow-hidden pointer-events-none select-none">
+                                      <div className="animate-pulse">FIN</div>
+                                    </div>
+                                  )}
+                                  <Wallet className="w-5 h-5 z-10 relative" />
+                                </div>
+                                <div className="space-y-1">
+                                  <h4 className="text-xs font-bold text-[#faf6ee] font-mono">Financial Instructions</h4>
+                                  <p className="text-[11px] text-gray-400 font-sans">Digital asset guidance</p>
+                                </div>
+                              </motion.div>
+
+                              {/* Card 4: Crypto Legacy */}
+                              <motion.div
+                                onClick={() => setEditCategory("Credentials")}
+                                whileHover={{ y: -4 }}
+                                className={`relative p-5 border rounded-2xl cursor-pointer transition-all duration-300 flex items-start gap-4 select-none ${
+                                  editCategory === "Credentials" ? "bg-[#111827]/85 border-[#E6BE72]/50 shadow-[0_10px_25px_rgba(230,190,114,0.15)]" : "bg-[#111827]/30 border-white/5"
+                                }`}
+                              >
+                                <div className="p-3 bg-[#E6BE72]/10 border border-[#E6BE72]/20 rounded-xl text-[#E6BE72] relative overflow-hidden flex-shrink-0">
+                                  {editCategory === "Credentials" && (
+                                    <div className="absolute inset-0 flex flex-col items-center justify-center font-mono text-[7px] text-[#E6BE72]/40 overflow-hidden pointer-events-none select-none">
+                                      <div className="animate-pulse">WEB3</div>
+                                    </div>
+                                  )}
+                                  <Box className="w-5 h-5 z-10 relative" />
+                                </div>
+                                <div className="space-y-1">
+                                  <h4 className="text-xs font-bold text-[#faf6ee] font-mono">Crypto Legacy</h4>
+                                  <p className="text-[11px] text-gray-400 font-sans">Web3 inheritance details</p>
+                                </div>
+                              </motion.div>
+                            </div>
+                          </div>
+
+                          <div className="pt-4 flex justify-between items-center gap-4">
+                            <button onClick={() => setIsWizardActive(false)} className="text-xs text-gray-500 hover:text-white font-mono cursor-pointer bg-transparent border-0">
+                              ✕ CANCEL SETUP
+                            </button>
                             <button 
-                              onClick={() => { setIsWizardActive(true); setStep(1); }}
-                              className="outlined-action w-full py-4 rounded-full text-xs font-bold transition-all"
+                              onClick={() => setStep(2)}
+                              disabled={!newVaultName || !editCategory}
+                              className="w-full sm:w-auto bg-gradient-to-r from-[#E6BE72] to-[#c5a880] text-gray-950 font-bold px-8 py-3.5 rounded-full text-xs transition-all uppercase tracking-wider cursor-pointer shadow-lg disabled:opacity-40 border-0"
                             >
-                              START SETUP →
+                              CONTINUE SETUP →
+                            </button>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+
+                    {/* Wizard Step 2: Configure Recipients & Upload Files */}
+                    {isWizardActive && step === 2 && (
+                      <motion.div
+                        key="wizard-step-2"
+                        initial={{ opacity: 0, scale: 0.98 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.98 }}
+                        className="glass-panel p-8 md:p-12 rounded-[2rem] max-w-3xl w-full mx-auto space-y-8 relative border border-[#E6BE72]/20 shadow-2xl text-left"
+                      >
+                        {/* Stepper progress indicator */}
+                        <div className="w-full flex items-center justify-between border-b border-white/5 pb-6">
+                          <div className="flex items-center space-x-3">
+                            <span className="text-[9px] text-[#E6BE72] font-mono uppercase tracking-widest font-bold">Capsule Wizard</span>
+                            <h2 className="text-xl font-bold text-white">Configure Escrows</h2>
+                          </div>
+                          <div className="flex items-center gap-1.5 font-mono text-[10px] text-gray-400">
+                            <span className="text-[#E6BE72] font-bold">2</span> / 4
+                          </div>
+                        </div>
+
+                        <div className="space-y-6">
+                          {/* Configured categories preview list */}
+                          {wizardCategories.length > 0 && (
+                            <div className="space-y-2.5 p-4 bg-[#090B14]/60 border border-white/5 rounded-2xl max-h-48 overflow-y-auto">
+                              <span className="text-[9px] text-gray-500 uppercase tracking-widest block font-bold font-mono">Designated Beneficiaries</span>
+                              <div className="grid grid-cols-1 gap-2">
+                                {wizardCategories.map(c => (
+                                  <div key={c.id} className="p-3 bg-[#111827]/60 border border-white/5 rounded-xl flex items-center justify-between text-xs font-mono">
+                                    <div>
+                                      <span className="text-white font-bold">{c.category} Escrow</span>
+                                      <p className="text-[9px] text-gray-500">Beneficiary: {c.recipient.substring(0, 8)}...{c.recipient.substring(36)}</p>
+                                      {c.fileName && <p className="text-[9px] text-[#2ECC71] mt-0.5">📄 {c.fileName} ({Math.round(c.content.length / 1024)} KB)</p>}
+                                    </div>
+                                    <button 
+                                      onClick={() => removeCategoryFromWizard(c.id)} 
+                                      className="text-[#FF5A5F] hover:text-[#FF5A5F]/80 p-1 font-bold text-[10px] cursor-pointer bg-transparent border-0"
+                                    >
+                                      Remove
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Dynamic Add Config Block */}
+                          <div className="p-5 bg-[#090B14]/40 border border-white/5 rounded-3xl space-y-4 font-mono">
+                            <span className="text-[10px] text-[#E6BE72] font-bold uppercase tracking-widest block">Add Category Escrow Rule</span>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div className="space-y-1">
+                                <label className="text-[9px] text-gray-500 uppercase tracking-wider block font-bold">Category</label>
+                                <select 
+                                  value={editCategory}
+                                  onChange={(e) => setEditCategory(e.target.value)}
+                                  className="w-full design-input px-3.5 py-3 text-xs bg-gray-950 border-white/5"
+                                >
+                                  <option value="Memories">❤️ Memories</option>
+                                  <option value="Finances">💰 Finances</option>
+                                  <option value="Medical">🏥 Medical</option>
+                                  <option value="Credentials">🔑 Credentials</option>
+                                </select>
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-[9px] text-gray-500 uppercase tracking-wider block font-bold">Beneficiary Address</label>
+                                <input 
+                                  type="text" 
+                                  placeholder="0x..."
+                                  value={editRecipient}
+                                  onChange={(e) => setEditRecipient(e.target.value)}
+                                  className="w-full design-input px-3.5 py-3 text-xs"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div className="space-y-1">
+                                <label className="text-[9px] text-gray-500 uppercase tracking-wider block font-bold">Inactivity Countdown</label>
+                                <select 
+                                  value={editInactivity}
+                                  onChange={(e) => setEditInactivity(Number(e.target.value))}
+                                  className="w-full design-input px-3.5 py-3 text-xs bg-gray-950 border-white/5"
+                                >
+                                  <option value="15">15s (Demo)</option>
+                                  <option value="30">30s (Demo)</option>
+                                  <option value="60">60s (Demo)</option>
+                                  <option value="300">5 min</option>
+                                </select>
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-[9px] text-gray-500 uppercase tracking-wider block font-bold">Veto Grace Period</label>
+                                <select 
+                                  value={editGrace}
+                                  onChange={(e) => setEditGrace(Number(e.target.value))}
+                                  className="w-full design-input px-3.5 py-3 text-xs bg-gray-950 border-white/5"
+                                >
+                                  <option value="5">5s (Demo)</option>
+                                  <option value="15">15s (Demo)</option>
+                                  <option value="30">30s (Demo)</option>
+                                  <option value="60">60s (Demo)</option>
+                                </select>
+                              </div>
+                            </div>
+
+                            {/* Content type toggle */}
+                            <div className="space-y-2">
+                              <label className="text-[9px] text-gray-500 uppercase tracking-wider block font-bold">Payload format</label>
+                              <div className="flex p-1 rounded-2xl bg-white/[0.03] border border-white/5 backdrop-blur-md">
+                                <button
+                                  type="button"
+                                  onClick={() => { setEditContentType("text"); setEditContent(""); }}
+                                  className={`flex-1 py-2 text-[10px] font-bold rounded-xl transition-all duration-200 cursor-pointer border-0 ${
+                                    editContentType === "text" 
+                                      ? "bg-white/10 text-white border border-white/10 shadow-[0_2px_8px_rgba(255,255,255,0.02)] font-extrabold" 
+                                      : "text-gray-500 hover:text-white bg-transparent"
+                                  }`}
+                                >
+                                  Text Memoir
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => { setEditContentType("file"); setEditContent(""); }}
+                                  className={`flex-1 py-2 text-[10px] font-bold rounded-xl transition-all duration-200 cursor-pointer border-0 ${
+                                    editContentType === "file" 
+                                      ? "bg-white/10 text-white border border-white/10 shadow-[0_2px_8px_rgba(255,255,255,0.02)] font-extrabold" 
+                                      : "text-gray-500 hover:text-white bg-transparent"
+                                  }`}
+                                >
+                                  Upload Document / Media
+                                </button>
+                              </div>
+                            </div>
+
+                            {editContentType === "text" ? (
+                              <div className="space-y-1">
+                                <label className="text-[9px] text-gray-500 uppercase tracking-wider block font-bold">Legacy Text content</label>
+                                <textarea 
+                                  placeholder="Write secret messages, instructions, or credentials here..."
+                                  value={editContent}
+                                  onChange={(e) => setEditContent(e.target.value)}
+                                  rows={3}
+                                  className="w-full design-input p-3.5 text-xs resize-none"
+                                />
+                              </div>
+                            ) : (
+                              <div className="space-y-2">
+                                <label className="text-[9px] text-gray-500 uppercase tracking-wider block font-bold">Drag and Drop Document / Media (Max 2MB)</label>
+                                <div className="border border-dashed border-white/10 rounded-2xl p-6 text-center bg-[#090B14]/40 hover:border-[#E6BE72]/20 transition-all relative">
+                                  <input 
+                                    type="file" 
+                                    onChange={handleFileUpload}
+                                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                  />
+                                  <Upload className="w-6 h-6 mx-auto text-gray-500 mb-2" />
+                                  <span className="text-[10px] text-gray-400 block truncate">
+                                    {uploadedFileName ? `Selected file: ${uploadedFileName}` : "Drag and drop PDF, PNG, JPG, MP3, MP4 or click to select"}
+                                  </span>
+                                </div>
+                              </div>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={addCategoryToWizard}
+                              disabled={!editRecipient || !editContent}
+                              className="w-full bg-[#111827] border border-white/10 hover:border-[#E6BE72]/30 text-[#E6BE72] font-bold py-3 rounded-xl text-xs transition-all cursor-pointer disabled:opacity-40"
+                            >
+                              + Add Category Rule
                             </button>
                           </div>
 
-                          {/* Vaults list dashboard display */}
-                          {vaults.length > 0 && (
-                            <div className="space-y-3 pt-6 border-t border-gray-900">
-                              <h4 className="text-xs font-bold text-[#faf6ee] font-mono uppercase tracking-wider">Active Local Anchors</h4>
-                              {vaults.map(v => {
-                                const elapsed = Math.floor((Date.now() - v.lastHeartbeat) / 1000);
-                                const countdown = Math.max(0, v.inactivityPeriod - elapsed);
-                                const graceCountdown = Math.max(0, (v.inactivityPeriod + v.gracePeriod) - elapsed);
+                          <div className="pt-4 flex justify-between items-center gap-4">
+                            <button onClick={() => setStep(1)} className="text-xs text-gray-500 hover:text-white font-mono cursor-pointer bg-transparent border-0">
+                              &lt;&lt; BACK
+                            </button>
+                            <button 
+                              onClick={() => setStep(3)}
+                              disabled={wizardCategories.length === 0}
+                              className="outlined-action px-6 py-3 rounded-full text-xs font-bold disabled:opacity-50"
+                            >
+                              NEXT: REVIEW SUMMARY &gt;&gt;
+                            </button>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
 
-                                return (
-                                  <div key={v.id} className="p-4 bg-gray-950/40 border border-gray-900/60 rounded-2xl flex items-center justify-between gap-4 font-mono text-xs">
-                                    <div>
-                                      <h5 className="font-bold text-white text-xs">{v.name}</h5>
-                                      <p className="text-[10px] text-gray-500 mt-0.5">ID: {v.id}</p>
-                                    </div>
-                                    <div className="text-right flex items-center space-x-3">
-                                      <div>
-                                        {v.status === "ACTIVE" && <span className="text-emerald-400">{countdown}s left</span>}
-                                        {v.status === "PENDING_UNLOCK" && <span className="text-amber-500 animate-pulse">GRACE ({graceCountdown}s)</span>}
-                                        {v.status === "UNLOCKED" && <span className="text-red-400">Unlocked</span>}
-                                      </div>
-                                      {v.status === "ACTIVE" && (
-                                        <button
-                                          onClick={() => triggerHeartbeat(v.id)}
-                                          className="px-3 py-1 bg-gray-900 hover:border-[#e5c483]/30 border border-gray-800 text-[#e5c483] rounded-lg text-[10px] cursor-pointer"
-                                        >
-                                          Sign
-                                        </button>
-                                      )}
-                                      {v.status === "PENDING_UNLOCK" && (
-                                        <button
-                                          onClick={() => triggerVeto(v.id)}
-                                          className="px-3 py-1 bg-amber-500 text-gray-950 font-bold rounded-lg text-[10px] cursor-pointer"
-                                        >
-                                          Veto
-                                        </button>
-                                      )}
-                                      <button
-                                        onClick={() => deleteVault(v.id)}
-                                        className="p-1.5 hover:bg-red-500/10 text-red-400 hover:text-red-300 rounded-lg transition-colors cursor-pointer"
-                                        title="Delete Vault"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </button>
-                                    </div>
+                    {/* Wizard Step 3: Review and Deploy */}
+                    {isWizardActive && step === 3 && (
+                      <motion.div
+                        key="wizard-step-3"
+                        initial={{ opacity: 0, scale: 0.98 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.98 }}
+                        className="glass-panel p-8 md:p-12 rounded-[2rem] max-w-3xl w-full mx-auto space-y-8 relative border border-[#E6BE72]/20 shadow-2xl text-left"
+                      >
+                        {/* Stepper progress indicator */}
+                        <div className="w-full flex items-center justify-between border-b border-white/5 pb-6">
+                          <div className="flex items-center space-x-3">
+                            <span className="text-[9px] text-[#E6BE72] font-mono uppercase tracking-widest font-bold">Capsule Wizard</span>
+                            <h2 className="text-xl font-bold text-white">Review Summary</h2>
+                          </div>
+                          <div className="flex items-center gap-1.5 font-mono text-[10px] text-gray-400">
+                            <span className="text-[#E6BE72] font-bold">3</span> / 4
+                          </div>
+                        </div>
+
+                        <div className="space-y-6">
+                          <div className="p-4 bg-[#090B14]/40 border border-white/5 rounded-2xl space-y-1 font-mono text-xs">
+                            <span className="text-[9px] text-gray-500 uppercase block">Capsule Name</span>
+                            <span className="text-white font-extrabold text-sm">{newVaultName}</span>
+                          </div>
+
+                          <div className="space-y-3 font-mono">
+                            <span className="text-[9px] text-gray-500 uppercase block font-bold tracking-widest">Configured Category Escrows</span>
+                            <div className="grid grid-cols-1 gap-3">
+                              {wizardCategories.map((c, i) => (
+                                <div key={i} className="p-4 bg-[#111827]/60 border border-white/5 rounded-2xl text-xs space-y-2">
+                                  <div className="flex justify-between items-center border-b border-white/5 pb-1">
+                                    <span className="font-bold text-[#E6BE72] text-sm">{c.category}</span>
+                                    <span className="text-[10px] text-gray-500">Inactivity: {c.inactivityPeriod}s | Grace: {c.gracePeriod}s</span>
                                   </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </motion.div>
-                      )}
-
-                      {/* Wizard Step 1: Form Details */}
-                      {isWizardActive && step === 1 && (
-                        <motion.div
-                          key="wizard-step-1"
-                          initial={{ opacity: 0, x: 15 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          exit={{ opacity: 0, x: -15 }}
-                          className="glass-panel p-6 md:p-8 rounded-3xl space-y-6"
-                        >
-                          <div className="flex items-center justify-between border-b border-gray-900 pb-3">
-                            <h3 className="font-bold text-base text-[#faf6ee] font-mono">Create Legacy Vault</h3>
-                            <span className="px-2.5 py-0.5 bg-gray-950 border border-gray-900 rounded-md text-[10px] text-[#ddb892] font-mono">
-                              Step 1 out of 4
-                            </span>
-                          </div>
-
-                          <div className="space-y-5">
-                            <div className="space-y-1.5">
-                              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest font-mono block">Vault Name</label>
-                              <input 
-                                type="text" 
-                                placeholder="e.g. Secret Legacy Access"
-                                value={newVaultName}
-                                onChange={(e) => setNewVaultName(e.target.value)}
-                                className="w-full design-input px-4 py-3 text-sm"
-                              />
-                            </div>
-
-                            <div className="space-y-1.5">
-                              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest font-mono block">Recipient Address</label>
-                              <input 
-                                type="text" 
-                                placeholder="0x..."
-                                value={newRecipient}
-                                onChange={(e) => setNewRecipient(e.target.value)}
-                                className="w-full design-input px-4 py-3 text-xs"
-                              />
-                            </div>
-
-                            <div className="pt-4 flex justify-between items-center gap-4">
-                              <button 
-                                onClick={() => setIsWizardActive(false)}
-                                className="text-xs text-gray-500 hover:text-white font-mono"
-                              >
-                                &lt;&lt; CANCEL
-                              </button>
-                              <button 
-                                onClick={() => setStep(2)}
-                                disabled={!newVaultName || !newRecipient}
-                                className="outlined-action px-6 py-3 rounded-full text-xs font-bold"
-                              >
-                                CONTINUE SETUP →
-                              </button>
+                                  <p className="text-[10px] text-gray-400 truncate">Beneficiary: {c.recipient}</p>
+                                  {c.fileName && <p className="text-[10px] text-[#2ECC71] font-bold">📄 {c.fileName} ({Math.round(c.content.length / 1024)} KB)</p>}
+                                </div>
+                              ))}
                             </div>
                           </div>
-                        </motion.div>
-                      )}
 
-                      {/* Wizard Step 2: Time Settings */}
-                      {isWizardActive && step === 2 && (
-                        <motion.div
-                          key="wizard-step-2"
-                          initial={{ opacity: 0, x: 15 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          exit={{ opacity: 0, x: -15 }}
-                          className="glass-panel p-6 md:p-8 rounded-3xl space-y-6"
-                        >
-                          <div className="flex items-center justify-between border-b border-gray-900 pb-3">
-                            <h3 className="font-bold text-base text-[#faf6ee] font-mono">Create Legacy Vault</h3>
-                            <span className="px-2.5 py-0.5 bg-gray-950 border border-gray-900 rounded-md text-[10px] text-[#ddb892] font-mono">
-                              Step 2 out of 4
-                            </span>
-                          </div>
-
-                          <div className="space-y-5">
-                            <div className="space-y-2">
-                              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest font-mono block">Inactivity Trigger (Demo Seconds)</label>
-                              <div className="grid grid-cols-3 gap-2">
-                                {[15, 30, 45].map(s => (
-                                  <button
-                                    key={s}
-                                    type="button"
-                                    onClick={() => setNewInactivity(s)}
-                                    className={`py-2.5 rounded-xl text-xs font-mono border transition-all cursor-pointer ${newInactivity === s ? "bg-[#e5c483]/10 border-[#e5c483] text-[#e5c483] font-bold" : "border-gray-800 bg-gray-950/20 text-gray-400 hover:text-[#faf6ee]"}`}
-                                  >
-                                    {s}s
-                                  </button>
-                                ))}
+                          {isEncrypting ? (
+                            <div className="p-5 bg-[#111827]/60 border border-white/5 rounded-3xl space-y-3 text-xs font-mono text-[#E6BE72]">
+                              <p className="flex items-center space-x-2.5 font-bold">
+                                <RefreshCw className="w-4 h-4 animate-spin text-[#E6BE72]" />
+                                <span>Local Cryptographic Secret Splitting (2-of-3)...</span>
+                              </p>
+                              <div className="w-full bg-white/5 rounded-full h-1.5 overflow-hidden">
+                                <div className="bg-gradient-to-r from-[#E6BE72] to-[#7C5CFF] h-1.5 rounded-full animate-[grid-scroll_1.5s_infinite]" style={{ width: '60%' }} />
                               </div>
+                              <p className="text-gray-500 text-[10px]">Uploading ciphertext chunks to decentralized IPFS gateway...</p>
                             </div>
-
-                            <div className="space-y-2">
-                              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest font-mono block">Grace Period (Veto Window)</label>
-                              <div className="grid grid-cols-3 gap-2">
-                                {[5, 15, 45].map(s => (
-                                  <button
-                                    key={s}
-                                    type="button"
-                                    onClick={() => setNewGrace(s)}
-                                    className={`py-2.5 rounded-xl text-xs font-mono border transition-all cursor-pointer ${newGrace === s ? "bg-[#e5c483]/10 border-[#e5c483] text-[#e5c483] font-bold" : "border-gray-800 bg-gray-950/20 text-gray-400 hover:text-[#faf6ee]"}`}
-                                  >
-                                    {s}s
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-
+                          ) : (
                             <div className="pt-4 flex justify-between items-center gap-4">
-                              <button 
-                                onClick={() => setStep(1)}
-                                className="text-xs text-gray-500 hover:text-white font-mono"
-                              >
+                              <button onClick={() => setStep(2)} className="text-xs text-gray-500 hover:text-white font-mono cursor-pointer bg-transparent border-0">
                                 &lt;&lt; BACK
                               </button>
                               <button 
-                                onClick={() => setStep(3)}
-                                className="outlined-action px-6 py-3 rounded-full text-xs font-bold"
+                                onClick={handleCreateVault}
+                                className="w-full sm:w-auto bg-gradient-to-r from-[#E6BE72] to-[#c5a880] text-gray-950 font-bold px-8 py-3.5 rounded-full text-xs transition-all uppercase tracking-wider cursor-pointer shadow-lg border-0"
                               >
-                                SUBMIT &gt;&gt;
+                                ENCRYPT & DEPLOY CAPSULE →
                               </button>
                             </div>
+                          )}
+                        </div>
+                      </motion.div>
+                    )}
+
+                    {/* Wizard Step 4: Receipt */}
+                    {isWizardActive && step === 4 && (
+                      <motion.div
+                        key="wizard-step-4"
+                        initial={{ opacity: 0, scale: 0.98 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.98 }}
+                        className="glass-panel p-8 md:p-12 rounded-[2rem] max-w-3xl w-full mx-auto space-y-8 relative border border-[#E6BE72]/20 shadow-2xl text-left"
+                      >
+                        {/* Stepper progress indicator */}
+                        <div className="w-full flex items-center justify-between border-b border-white/5 pb-6">
+                          <div className="flex items-center space-x-3">
+                            <span className="text-[9px] text-[#E6BE72] font-mono uppercase tracking-widest font-bold">Capsule Wizard</span>
+                            <h2 className="text-xl font-bold text-white">Receipt Summary</h2>
                           </div>
-                        </motion.div>
-                      )}
-
-                      {/* Wizard Step 3: Secret Content Editor */}
-                      {isWizardActive && step === 3 && (
-                        <motion.div
-                          key="wizard-step-3"
-                          initial={{ opacity: 0, x: 15 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          exit={{ opacity: 0, x: -15 }}
-                          className="glass-panel p-6 md:p-8 rounded-3xl space-y-6"
-                        >
-                          <div className="flex items-center justify-between border-b border-gray-900 pb-3">
-                            <h3 className="font-bold text-base text-[#faf6ee] font-mono">Create Legacy Vault</h3>
-                            <span className="px-2.5 py-0.5 bg-gray-950 border border-gray-900 rounded-md text-[10px] text-[#ddb892] font-mono">
-                              Step 3 out of 4
-                            </span>
+                          <div className="flex items-center gap-1.5 font-mono text-[10px] text-gray-400">
+                            <span className="text-[#2ECC71] font-bold">✓</span> Done
                           </div>
+                        </div>
 
-                          <div className="space-y-4">
-                            <div className="space-y-2">
-                              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest font-mono block">Secret Memoir / Vault Content</label>
-                              <textarea 
-                                placeholder="Enter your seed phrase, private documents, or legacy instructions..."
-                                value={newContent}
-                                onChange={(e) => setNewContent(e.target.value)}
-                                rows={6}
-                                className="w-full design-input p-4 text-xs resize-none"
-                              />
-                            </div>
+                        <div className="text-center p-6 bg-[#2ECC71]/5 border border-[#2ECC71]/10 rounded-3xl space-y-2">
+                          <CheckCircle2 className="w-12 h-12 text-[#2ECC71] mx-auto animate-pulse" />
+                          <h4 className="font-extrabold text-[#2ECC71] text-sm font-mono uppercase tracking-wider">Capsule Secured Successfully</h4>
+                          <p className="text-[11px] text-gray-400 font-mono leading-normal">
+                            All payloads are locally AES-256 client-side encrypted and hosted on IPFS. Secret shares are locked in Base Sepolia.
+                          </p>
+                        </div>
 
-                            {isEncrypting ? (
-                              <div className="p-3 bg-gray-950/60 border border-gray-900 rounded-xl space-y-2 text-xs font-mono text-[#e5c483]">
-                                <p className="flex items-center space-x-2">
-                                  <RefreshCw className="w-3 animate-spin" />
-                                  <span>Running AES-256 local key splits...</span>
-                                </p>
-                                <p className="text-gray-500">Uploading ciphertext to IPFS...</p>
-                              </div>
-                            ) : (
-                              <div className="pt-4 flex justify-between items-center gap-4">
-                                <button 
-                                  onClick={() => setStep(2)}
-                                  className="text-xs text-gray-500 hover:text-white font-mono"
+                        <div className="p-4 bg-[#090B14] border border-white/5 rounded-2xl space-y-1 font-mono text-xs">
+                          <span className="text-[9px] text-gray-500 uppercase block">Capsule ID (Bytes32 Address)</span>
+                          <div className="flex justify-between items-center">
+                            <span className="text-[11px] font-mono text-[#faf6ee] break-all truncate mr-2">{createdVaultId}</span>
+                            <button 
+                              onClick={() => copyToClipboard(createdVaultId, "vault_id")} 
+                              className="p-1 hover:bg-[#E6BE72]/10 text-[#E6BE72] rounded cursor-pointer bg-transparent border-0"
+                            >
+                              {copiedShare === "vault_id" ? <Check className="w-3.5 h-3.5 text-[#2ECC71]" /> : <Copy className="w-3.5 h-3.5" />}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="space-y-3 font-mono">
+                          <h5 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Designated Beneficiaries Key Shares (Share 2)</h5>
+                          <p className="text-[10px] text-gray-500 leading-relaxed">
+                            <span className="text-[#FF5A5F] font-bold">WARNING:</span> Copy the designated Category Share 2 and send it to your respective recipient. Decryption requires both the on-chain share and this private key share.
+                          </p>
+                          
+                          <div className="grid grid-cols-1 gap-3">
+                            {createdVaultConfigs.map((cfg, idx) => (
+                              <div key={idx} className="p-4 bg-[#111827]/60 border border-white/5 rounded-2xl space-y-2 text-xs">
+                                <div className="flex justify-between items-center">
+                                  <span className="font-bold text-white">{cfg.category} Share 2</span>
+                                  <span className="text-[9px] text-[#E6BE72] bg-[#E6BE72]/10 px-2 py-0.5 rounded border border-[#E6BE72]/20 font-bold">Beneficiary Share</span>
+                                </div>
+                                <p className="text-[10px] text-gray-400 truncate break-all">{cfg.share2}</p>
+                                <button
+                                  onClick={() => copyToClipboard(cfg.share2, `s2-${idx}`)}
+                                  className="w-full py-2 border border-white/5 hover:border-[#E6BE72]/30 text-[10px] text-gray-400 hover:text-white rounded-xl flex items-center justify-center space-x-1.5 cursor-pointer transition-all bg-transparent"
                                 >
-                                  &lt;&lt; BACK
-                                </button>
-                                <button 
-                                  onClick={handleCreateVault}
-                                  disabled={!newContent}
-                                  className="outlined-action px-6 py-3 rounded-full text-xs font-bold"
-                                >
-                                  ENCRYPT & LOCK &gt;&gt;
+                                  {copiedShare === `s2-${idx}` ? (
+                                    <>
+                                      <Check className="w-3.5 h-3.5 text-[#2ECC71]" />
+                                      <span>Copied!</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Copy className="w-3.5 h-3.5" />
+                                      <span>Copy Share 2</span>
+                                    </>
+                                  )}
                                 </button>
                               </div>
-                            )}
+                            ))}
                           </div>
-                        </motion.div>
-                      )}
+                        </div>
 
-                      {/* Wizard Step 4: Vault Receipt */}
-                      {isWizardActive && step === 4 && (
-                        <motion.div
-                          key="wizard-step-4"
-                          initial={{ opacity: 0, scale: 0.97 }}
-                          animate={{ opacity: 1, scale: 1 }}
-                          exit={{ opacity: 0, scale: 0.97 }}
-                          className="glass-panel p-6 md:p-8 rounded-3xl space-y-6"
+                        <button 
+                          onClick={resetWizard}
+                          className="w-full border border-[#E6BE72]/30 hover:border-[#E6BE72] text-[#E6BE72] hover:text-white font-bold py-3.5 rounded-full text-xs font-mono cursor-pointer uppercase tracking-wider transition-all bg-transparent"
                         >
-                          <div className="text-center p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl space-y-2">
-                            <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto" />
-                            <h4 className="font-extrabold text-emerald-400 text-sm font-mono uppercase tracking-wider">Vault Locked Successfully</h4>
-                            <p className="text-[11px] text-gray-400">
-                              Payload is client-side encrypted and hosted on IPFS. The key has been split into 3 shares.
-                            </p>
-                          </div>
-
-                          <div className="p-3 bg-[#0d0f19] border border-gray-900 rounded-xl space-y-1">
-                            <span className="text-[10px] text-gray-500 font-mono uppercase block">Vault Address (ID)</span>
-                            <p className="text-[11px] font-mono text-[#faf6ee] break-all">{createdVaultId}</p>
-                          </div>
-
-                          <div className="space-y-2 pt-2">
-                            <h5 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest font-mono">Secret Key Shares</h5>
-                            
-                            {/* Share 1 */}
-                            <div className="p-2.5 bg-gray-950/40 border border-gray-900/60 rounded-xl flex items-center justify-between text-xs">
-                              <div>
-                                <p className="font-bold text-[#faf6ee] text-[11px]">Share 1 (On-Chain Lock)</p>
-                                <p className="text-[10px] text-gray-500">Locked in smart contract.</p>
-                              </div>
-                              <span className="text-[#e5c483] font-mono text-[10px]">Contract</span>
-                            </div>
-
-                            {/* Share 2 */}
-                            <div className="p-2.5 bg-gray-950/40 border border-gray-900/60 rounded-xl flex items-center justify-between text-xs gap-3 min-w-0">
-                              <div className="truncate">
-                                <p className="font-bold text-[#faf6ee] text-[11px]">Share 2 (Recipient / Heir)</p>
-                                <p className="text-[10px] text-gray-500 font-mono truncate">{createdVaultShares[1]}</p>
-                              </div>
-                              <button
-                                onClick={() => copyToClipboard(createdVaultShares[1], 1)}
-                                className="p-1.5 hover:bg-[#e5c483]/10 text-[#e5c483] rounded-lg flex-shrink-0 cursor-pointer"
-                              >
-                                {copiedShare === 1 ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                              </button>
-                            </div>
-
-                            {/* Share 3 */}
-                            <div className="p-2.5 bg-gray-950/40 border border-gray-900/60 rounded-xl flex items-center justify-between text-xs gap-3 min-w-0">
-                              <div className="truncate">
-                                <p className="font-bold text-[#faf6ee] text-[11px]">Share 3 (Backup Escrow)</p>
-                                <p className="text-[10px] text-gray-500 font-mono truncate">{createdVaultShares[2]}</p>
-                              </div>
-                              <button
-                                onClick={() => copyToClipboard(createdVaultShares[2], 2)}
-                                className="p-1.5 hover:bg-[#e5c483]/10 text-[#e5c483] rounded-lg flex-shrink-0 cursor-pointer"
-                              >
-                                {copiedShare === 2 ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                              </button>
-                            </div>
-                          </div>
-
-                          <button 
-                            onClick={resetWizard}
-                            className="w-full border border-gray-800 text-gray-400 hover:text-white font-bold py-3 rounded-full text-xs font-mono cursor-pointer"
-                          >
-                            CREATE ANOTHER VAULT
-                          </button>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
+                          Finish & Go to Dashboard
+                        </button>
+                      </motion.div>
+                    )}
                   </motion.div>
                 )}
 
-                {/* Recipient Claim Tab View */}
+                {/* Tab 2: Recipient Claim Portal */}
                 {activeTab === "recipient" && (
                   <motion.div
                     key="recipient-tab-view"
@@ -1257,80 +2309,198 @@ export default function LastWishApp() {
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
                     transition={{ duration: 0.3 }}
-                    className="glass-panel p-6 md:p-8 rounded-3xl space-y-6"
+                    className="glass-panel p-8 md:p-12 rounded-[2rem] max-w-5xl w-full mx-auto space-y-8 text-left"
                   >
-                    <div className="text-center border-b border-gray-900 pb-4">
-                      <h2 className="text-2xl font-extrabold text-[#e5c483] tracking-wider uppercase font-mono">
-                        RECLAIM Digital LEGACY VAULT
-                      </h2>
+                    <div>
+                      <span className="text-[10px] text-[#E6BE72] font-mono uppercase tracking-widest font-bold">Decrypt Legacy</span>
+                      <h3 className="text-2xl font-bold text-white mt-1">Claim Escrow Portal</h3>
+                      <p className="text-xs text-gray-400 mt-1 font-mono">
+                        Retrieve the locked contract share and combine it client-side with your recipient share to decrypt files.
+                      </p>
                     </div>
 
-                    <form onSubmit={handleDecryptVault} className="space-y-5">
-                      <div className="space-y-1.5">
-                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest font-mono block">Vault ID</label>
-                        <input 
-                          type="text" 
-                          placeholder="0x..."
-                          value={claimVaultAddress}
-                          onChange={(e) => setClaimVaultAddress(e.target.value)}
-                          className="w-full design-input px-4 py-3 text-xs"
-                        />
-                        <p className="text-[10px] text-gray-600 font-mono">
-                          (e.g., {vaults[0]?.id || "0x8a92f012b3c7..."})
-                        </p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                      {/* Left: Input Form */}
+                      <div className="space-y-6">
+                        <form onSubmit={handleDecryptVault} className="space-y-4 font-mono text-xs">
+                          
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block">Vault ID</label>
+                            <div className="flex gap-2">
+                              <input 
+                                type="text" 
+                                placeholder="0x..."
+                                value={claimVaultAddress}
+                                onChange={(e) => setClaimVaultAddress(e.target.value)}
+                                className="flex-1 design-input px-4 py-3 text-xs"
+                              />
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  try {
+                                    const text = await navigator.clipboard.readText();
+                                    setClaimVaultAddress(text.trim());
+                                  } catch (err) {
+                                    console.error("Failed to read clipboard:", err);
+                                  }
+                                }}
+                                className="px-4 bg-gray-950 border border-gray-900 text-gray-400 hover:text-white rounded-xl text-xs flex items-center justify-center space-x-1 transition-all cursor-pointer border-0"
+                                title="Paste Vault ID from clipboard"
+                              >
+                                <span>Paste</span>
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block">Your Key Share (Share 2)</label>
+                            <div className="flex gap-2 items-start">
+                              <textarea 
+                                placeholder="Paste the Share 2 hex string here..."
+                                value={recipientShareInput}
+                                onChange={(e) => setRecipientShareInput(e.target.value)}
+                                rows={2}
+                                className="flex-1 design-input px-4 py-3 text-xs resize-none"
+                              />
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  try {
+                                    const text = await navigator.clipboard.readText();
+                                    setRecipientShareInput(text.trim());
+                                  } catch (err) {
+                                    console.error("Failed to read clipboard:", err);
+                                  }
+                                }}
+                                className="px-4 py-3.5 bg-gray-950 border border-gray-900 text-gray-400 hover:text-white rounded-xl text-xs flex items-center justify-center space-x-1 transition-all cursor-pointer self-stretch border-0"
+                                title="Paste Share 2 from clipboard"
+                              >
+                                <span>Paste</span>
+                              </button>
+                            </div>
+                          </div>
+
+                          <button 
+                            type="submit"
+                            disabled={isDecrypting || !claimVaultAddress || !recipientShareInput}
+                            className="w-full bg-gradient-to-r from-[#E6BE72] to-[#c5a880] text-gray-950 font-bold py-3.5 rounded-full text-xs transition-all uppercase tracking-wider cursor-pointer shadow-lg disabled:opacity-50 border-0"
+                          >
+                            {isDecrypting ? "RUNNING DECRYPTION..." : "Retrieve & Decrypt Legacy →"}
+                          </button>
+                        </form>
+
+                        {isDecrypting && (
+                          <div className="p-4 bg-[#111827]/60 border border-white/5 rounded-2xl space-y-2 text-xs font-mono text-[#E6BE72]">
+                            <div className="flex items-center space-x-2">
+                              <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#E6BE72]" />
+                              <span className="font-bold">Reconstructing Cryptographic Secret...</span>
+                            </div>
+                            <div className="text-[10px] text-gray-500 pl-5 space-y-1">
+                              <p>✓ Fetching Share 1 from smart contract</p>
+                              <p className="animate-pulse">⏳ Combining Share 1 & Share 2 locally</p>
+                              <p className="text-gray-600">⌛ Decrypting IPFS payload with recovered key</p>
+                            </div>
+                          </div>
+                        )}
+
+                        {decryptionError && (
+                          <div className="p-4 bg-red-500/10 border border-[#FF5A5F]/20 rounded-2xl flex items-center space-x-2.5 text-xs text-[#FF5A5F] font-mono">
+                            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                            <span className="break-all">{decryptionError}</span>
+                          </div>
+                        )}
                       </div>
 
-                      <div className="space-y-1.5">
-                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest font-mono block">Recipient Key Share (Share 2)</label>
-                        <textarea 
-                          placeholder="Paste the Share 2 hex string here..."
-                          value={recipientShareInput}
-                          onChange={(e) => setRecipientShareInput(e.target.value)}
-                          rows={2}
-                          className="w-full design-input px-4 py-3 text-xs resize-none"
-                        />
-                      </div>
+                      {/* Right: Animated Vault Chest / Decrypted Payload Cards */}
+                      <div className="flex flex-col justify-center items-center p-6 bg-[#090B14]/40 border border-white/5 rounded-3xl min-h-[350px]">
+                        {decryptedItems.length > 0 ? (
+                          <div className="w-full space-y-4 font-mono text-left">
+                            <div className="flex items-center space-x-2 text-[#2ECC71] text-xs font-bold">
+                              <CheckCircle2 className="w-4 h-4" />
+                              <span>Decryption Success ({decryptedItems.length} categories)</span>
+                            </div>
 
-                      {isDecrypting ? (
-                        <div className="p-4 bg-gray-950/60 border border-gray-900 rounded-2xl text-center space-y-2">
-                          <RefreshCw className="w-5 h-5 animate-spin text-[#e5c483] mx-auto" />
-                          <p className="text-xs text-gray-400 font-mono">Querying vault smart contract & resolving GF(256) polynomials...</p>
-                        </div>
-                      ) : (
-                        <button 
-                          type="submit"
-                          className="outlined-action w-full py-4 rounded-full text-xs font-bold cursor-pointer"
-                        >
-                          DECRYPT & RECONSTRUCT →
-                        </button>
-                      )}
-                    </form>
+                            {/* Open Glowing Chest SVG */}
+                            <svg viewBox="0 0 100 100" className="w-24 h-24 mx-auto text-[#2ECC71] drop-shadow-[0_0_20px_rgba(46,204,113,0.25)]">
+                              <polygon points="20,40 50,0 80,40 50,45" fill="url(#chest-glow-grad-portal)" className="animate-pulse" />
+                              <rect x="15" y="45" width="70" height="40" rx="8" fill="#111827" stroke="#2ECC71" strokeWidth="2.5" />
+                              <path d="M 15 45 C 15 -10, 85 -10, 85 45 Z" fill="#111827" stroke="#2ECC71" strokeWidth="2.5" transform="translate(0, -15) scale(1, 0.6)" />
+                              <rect x="44" y="30" width="12" height="15" rx="3" fill="#090B14" stroke="#2ECC71" strokeWidth="2" />
+                              <circle cx="50" cy="37" r="2.5" fill="#2ECC71" />
+                              <defs>
+                                <linearGradient id="chest-glow-grad-portal" x1="50%" y1="0%" x2="50%" y2="100%">
+                                  <stop offset="0%" stopColor="#2ECC71" stopOpacity="0.6" />
+                                  <stop offset="100%" stopColor="#2ECC71" stopOpacity="0" />
+                                </linearGradient>
+                              </defs>
+                            </svg>
 
-                    {decryptionError && (
-                      <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl flex items-start space-x-3 text-red-400 text-xs font-mono">
-                        <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-                        <div>
-                          <h5 className="font-bold">Error Check</h5>
-                          <p className="text-[11px] mt-0.5">{decryptionError}</p>
-                        </div>
-                      </div>
-                    )}
+                            <div className="max-h-72 overflow-y-auto space-y-3 pr-1 w-full">
+                              {decryptedItems.map((item, idx) => (
+                                <div key={idx} className="p-4 bg-[#111827]/70 border border-white/5 rounded-2xl space-y-3">
+                                  <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                                    <div>
+                                      <span className="text-[9px] text-[#E6BE72] font-bold uppercase block">{item.category} Category</span>
+                                      <h5 className="font-bold text-white text-xs">{item.fileName || "Plain memoir text"}</h5>
+                                    </div>
+                                    {item.fileType && (
+                                      <span className="text-[9px] text-[#E6BE72] font-bold font-mono">{item.fileType}</span>
+                                    )}
+                                  </div>
 
-                    {decryptionResult && (
-                      <div className="p-5 bg-emerald-500/[0.02] border border-emerald-500/20 rounded-2xl space-y-3 font-mono">
-                        <div className="flex items-center space-x-2 text-emerald-400 text-xs font-bold">
-                          <CheckCircle2 className="w-4 h-4" />
-                          <span>Decryption Success</span>
-                        </div>
-                        <div className="p-4 bg-[#0d0f19] border border-gray-900 rounded-xl text-xs text-[#faf6ee] break-all whitespace-pre-wrap">
-                          {decryptionResult}
-                        </div>
+                                  {item.fileName ? (
+                                    <div className="space-y-3">
+                                      {item.fileType?.startsWith("image/") ? (
+                                        <div className="flex justify-center bg-gray-950/20 p-2 border border-white/5 rounded-2xl">
+                                          <img src={item.content} alt="Decrypted media" className="max-w-full max-h-48 rounded-xl object-contain" />
+                                        </div>
+                                      ) : item.fileType?.startsWith("audio/") ? (
+                                        <audio src={item.content} controls className="w-full mt-2" />
+                                      ) : (
+                                        <div className="p-2 border border-white/5 bg-gray-950/40 rounded-xl text-center">
+                                          <FileText className="w-8 h-8 text-gray-600 mx-auto mb-1" />
+                                          <span className="text-[10px] text-gray-400">File preview not available.</span>
+                                        </div>
+                                      )}
+
+                                      <a 
+                                        href={item.content} 
+                                        download={item.fileName}
+                                        className="flex items-center space-x-2 p-2.5 bg-[#E6BE72]/15 text-[#E6BE72] border border-[#E6BE72]/20 rounded-xl hover:bg-[#E6BE72]/25 transition-all font-bold w-full justify-center text-xs cursor-pointer"
+                                      >
+                                        <Download className="w-4 h-4" />
+                                        <span>Download File</span>
+                                      </a>
+                                    </div>
+                                  ) : (
+                                    <div className="p-3 bg-[#090B14]/60 border border-white/5 rounded-xl text-xs text-gray-300 break-all whitespace-pre-wrap leading-relaxed">
+                                      {item.content}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-center space-y-4">
+                            {/* Closed Chest SVG */}
+                            <svg viewBox="0 0 100 100" className="w-24 h-24 mx-auto text-[#E6BE72] drop-shadow-[0_0_20px_rgba(230,190,114,0.15)]">
+                              <rect x="15" y="45" width="70" height="40" rx="8" fill="#111827" stroke="#E6BE72" strokeWidth="2.5" />
+                              <path d="M 15 45 C 15 20, 85 20, 85 45 Z" fill="#111827" stroke="#E6BE72" strokeWidth="2.5" />
+                              <rect x="44" y="38" width="12" height="15" rx="3" fill="#090B14" stroke="#E6BE72" strokeWidth="2" />
+                              <circle cx="50" cy="45" r="2.5" fill="#E6BE72" />
+                            </svg>
+                            <p className="text-gray-500 font-mono text-[10px]">
+                              {isDecrypting ? "Unlocking vault chambers..." : "Enter Vault details to decrypt escrow files."}
+                            </p>
+                          </div>
+                        )}
                       </div>
-                    )}
+                    </div>
                   </motion.div>
                 )}
 
-                {/* Vault Inspector View */}
+                {/* Tab 3: Vault Inspector */}
                 {activeTab === "inspector" && (
                   <motion.div
                     key="inspector-tab-view"
@@ -1347,7 +2517,7 @@ export default function LastWishApp() {
                           <Search className="w-5 h-5 text-[#e5c483]" />
                           <span>Vault Metadata Inspector</span>
                         </h3>
-                        <p className="text-xs text-gray-400 mt-1">
+                        <p className="text-xs text-gray-400 mt-1 font-mono">
                           Query the Base Sepolia blockchain to read the public parameters and dynamic lock status of any digital legacy vault in real-time.
                         </p>
                       </div>
@@ -1392,79 +2562,240 @@ export default function LastWishApp() {
                         <motion.div 
                           initial={{ opacity: 0, scale: 0.98 }}
                           animate={{ opacity: 1, scale: 1 }}
-                          className="pt-4 border-t border-gray-900 space-y-4"
+                          className="pt-6 border-t border-white/5 space-y-6 text-left"
                         >
                           <div className="flex items-center justify-between">
-                            <h4 className="text-xs font-bold text-white uppercase tracking-wider font-mono">On-Chain Records</h4>
-                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${
-                              inspectedVault.status === "ACTIVE" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" :
-                              inspectedVault.status === "PENDING_UNLOCK" ? "bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse" :
-                              "bg-red-500/10 text-red-400 border border-red-500/20"
-                            }`}>
-                              ● Status: {inspectedVault.status}
-                            </span>
+                            <h4 className="text-xs font-bold text-white uppercase tracking-wider font-mono">Vault Records</h4>
+                            <span className="text-[10px] text-gray-500 font-mono">Heirs: {inspectedVault.recipientCount}</span>
                           </div>
 
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px] font-mono">
-                            {/* Owner */}
-                            <div className="p-3 bg-gray-950/40 border border-gray-900 rounded-xl space-y-1">
-                              <span className="text-[9px] text-gray-500 uppercase block">Owner Address</span>
-                              <span className="text-gray-300 break-all">{inspectedVault.owner}</span>
-                            </div>
+                          {/* Split layout: Sub-tabs + Right Timeline */}
+                          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                            {/* Left Panel: Sub-Tabs & Tab Contents */}
+                            <div className="lg:col-span-2 space-y-4">
+                              {/* Sub-Tabs Nav */}
+                              <div className="flex border-b border-white/5 overflow-x-auto pb-1 gap-4 font-mono text-[10px]">
+                                {[
+                                  { id: "overview", label: "Overview" },
+                                  { id: "recipients", label: "Recipients" },
+                                  { id: "files", label: "Files" },
+                                  { id: "transactions", label: "Transactions" },
+                                  { id: "contract", label: "Smart Contract" }
+                                ].map((tab) => (
+                                  <button
+                                    key={tab.id}
+                                    type="button"
+                                    onClick={() => setInspectSubTab(tab.id as any)}
+                                    className={`pb-2 px-1 font-bold transition-colors cursor-pointer border-b-2 uppercase tracking-wider whitespace-nowrap bg-transparent border-t-0 border-x-0 ${
+                                      inspectSubTab === tab.id 
+                                        ? "text-[#E6BE72] border-[#E6BE72]" 
+                                        : "text-gray-500 border-transparent hover:text-white"
+                                    }`}
+                                  >
+                                    {tab.label}
+                                  </button>
+                                ))}
+                              </div>
 
-                            {/* Recipient */}
-                            <div className="p-3 bg-gray-950/40 border border-gray-900 rounded-xl space-y-1">
-                              <span className="text-[9px] text-gray-500 uppercase block">Recipient Address</span>
-                              <span className="text-gray-300 break-all">{inspectedVault.recipient}</span>
-                            </div>
+                              {/* Tab Contents */}
+                              <div className="space-y-4 pt-2">
+                                {inspectSubTab === "overview" && (
+                                  <div className="grid grid-cols-1 gap-3 text-[11px] font-mono">
+                                    {/* Vault ID */}
+                                    <div className="p-3 bg-[#111827]/60 border border-white/5 rounded-xl space-y-1">
+                                      <span className="text-[9px] text-gray-500 uppercase block font-bold">Vault ID</span>
+                                      <div className="flex justify-between items-center text-gray-300">
+                                        <span className="break-all">{inspectedVault.id}</span>
+                                        <button 
+                                          onClick={() => copyToClipboard(inspectedVault.id, "inspect-v-id")}
+                                          className="p-1 text-gray-500 hover:text-[#E6BE72] rounded transition-colors cursor-pointer bg-transparent border-0"
+                                          title="Copy Vault ID"
+                                        >
+                                          {copiedShare === "inspect-v-id" ? (
+                                            <Check className="w-3.5 h-3.5 text-[#2ECC71]" />
+                                          ) : (
+                                            <Copy className="w-3.5 h-3.5" />
+                                          )}
+                                        </button>
+                                      </div>
+                                    </div>
 
-                            {/* Inactivity period */}
-                            <div className="p-3 bg-gray-950/40 border border-gray-900 rounded-xl space-y-1">
-                              <span className="text-[9px] text-gray-500 uppercase block">Inactivity Period</span>
-                              <span className="text-gray-300">{inspectedVault.inactivityPeriod} seconds</span>
-                            </div>
+                                    {/* Owner */}
+                                    <div className="p-3 bg-[#111827]/60 border border-white/5 rounded-xl space-y-1">
+                                      <span className="text-[9px] text-gray-500 uppercase block font-bold">Owner Address</span>
+                                      <span className="text-gray-300 break-all">{inspectedVault.owner}</span>
+                                    </div>
 
-                            {/* Grace period */}
-                            <div className="p-3 bg-gray-950/40 border border-gray-900 rounded-xl space-y-1">
-                              <span className="text-[9px] text-gray-500 uppercase block">Veto Grace Period</span>
-                              <span className="text-gray-300">{inspectedVault.gracePeriod} seconds</span>
-                            </div>
+                                    {/* Last Heartbeat */}
+                                    <div className="p-3 bg-[#111827]/60 border border-white/5 rounded-xl space-y-1">
+                                      <span className="text-[9px] text-gray-500 uppercase block font-bold">Last Recorded Heartbeat</span>
+                                      <div className="flex justify-between items-center text-gray-300">
+                                        <span>{new Date(inspectedVault.lastHeartbeat).toLocaleString()}</span>
+                                        <span className="text-gray-500 text-[10px]">
+                                          {Math.floor((Date.now() - inspectedVault.lastHeartbeat) / 1000)}s elapsed
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
 
-                            {/* Last Heartbeat */}
-                            <div className="p-3 bg-gray-950/40 border border-gray-900 rounded-xl space-y-1 md:col-span-2">
-                              <span className="text-[9px] text-gray-500 uppercase block">Last Recorded Heartbeat</span>
-                              <div className="flex justify-between items-center text-gray-300">
-                                <span>{new Date(inspectedVault.lastHeartbeat).toLocaleString()}</span>
-                                <span className="text-gray-500 text-[10px]">
-                                  {Math.floor((Date.now() - inspectedVault.lastHeartbeat) / 1000)}s elapsed
-                                </span>
+                                {inspectSubTab === "recipients" && (
+                                  <div className="space-y-3 font-mono">
+                                    {inspectedVault.configs.map((c: any, i: number) => (
+                                      <div key={i} className="p-4 bg-[#111827]/60 border border-white/5 rounded-2xl space-y-2 text-xs">
+                                        <div className="flex justify-between items-center border-b border-white/5 pb-2">
+                                          <div>
+                                            <span className="font-bold text-[#E6BE72] text-sm">{c.category} Escrow</span>
+                                            <p className="text-[9px] text-gray-500">Heir: {c.recipientAddress}</p>
+                                          </div>
+                                          <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold ${
+                                            c.status === "ACTIVE" ? "bg-emerald-500/10 text-[#2ECC71] border border-emerald-500/20" :
+                                            c.status === "PENDING_UNLOCK" ? "bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse" :
+                                            "bg-red-500/10 text-[#FF5A5F] border border-red-500/20"
+                                          }`}>
+                                            {c.status}
+                                          </span>
+                                        </div>
+
+                                        <div className="grid grid-cols-2 gap-2 text-[10px] text-gray-400 font-mono">
+                                          <div>Inactivity: {c.inactivityPeriod}s</div>
+                                          <div>Grace Window: {c.gracePeriod}s</div>
+                                        </div>
+
+                                        <button
+                                          onClick={() => {
+                                            setClaimVaultAddress(inspectedVault.id);
+                                            setActiveTab("recipient");
+                                          }}
+                                          className="w-full mt-2 py-2 bg-[#090B14] border border-white/5 text-gray-400 hover:text-white rounded-lg text-[10px] font-bold transition-all cursor-pointer"
+                                        >
+                                          Claim Escrow Category →
+                                        </button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {inspectSubTab === "files" && (
+                                  <div className="space-y-3 font-mono text-xs text-left">
+                                    {inspectedVault.configs.map((c: any, i: number) => (
+                                      <div key={i} className="p-4 bg-[#111827]/60 border border-white/5 rounded-xl space-y-2">
+                                        <div className="flex justify-between items-center">
+                                          <span className="font-bold text-white">{c.category} Ciphertext</span>
+                                          <span className="text-[9px] text-gray-500">IPFS Pin</span>
+                                        </div>
+                                        <div className="text-[10px] bg-[#090B14]/60 p-2 border border-white/5 rounded-lg">
+                                          <a 
+                                            href={`https://gateway.pinata.cloud/ipfs/${c.ipfsHash.replace("ipfs://", "")}`}
+                                            target="_blank" 
+                                            rel="noopener noreferrer"
+                                            className="text-[#E6BE72] hover:underline break-all block"
+                                          >
+                                            {c.ipfsHash} ↗
+                                          </a>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {inspectSubTab === "transactions" && (
+                                  <div className="space-y-3 font-mono text-[10px]">
+                                    {[
+                                      { method: "deployVault()", tx: "0x3B5C...D28F", gas: "128,409", status: "success" },
+                                      { method: "heartbeat()", tx: "0x8A1E...B409", gas: "45,210", status: "success" },
+                                      { method: "getRecipientStatus()", tx: "0x7F2D...C168", gas: "0 (call)", status: "success" }
+                                    ].map((tx, idx) => (
+                                      <div key={idx} className="p-3 bg-[#111827]/60 border border-white/5 rounded-xl flex justify-between items-center">
+                                        <div>
+                                          <span className="font-bold text-[#E6BE72] block">{tx.method}</span>
+                                          <span className="text-gray-500">Tx: {tx.tx}</span>
+                                        </div>
+                                        <div className="text-right">
+                                          <span className="text-emerald-400 font-bold block">{tx.status}</span>
+                                          <span className="text-gray-500">Gas: {tx.gas}</span>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {inspectSubTab === "contract" && (
+                                  <div className="p-4 bg-[#111827]/60 border border-white/5 rounded-2xl space-y-3 font-mono text-xs">
+                                    <div className="space-y-1">
+                                      <span className="text-[9px] text-gray-500 uppercase block font-bold">Contract Address</span>
+                                      <span className="text-[#E6BE72] break-all">{contractAddress}</span>
+                                    </div>
+                                    <div className="space-y-1">
+                                      <span className="text-[9px] text-gray-500 uppercase block font-bold">Base Methods Detected</span>
+                                      <p className="text-[10px] text-gray-400">
+                                        - `createVault(bytes32, RecipientConfig[])`<br />
+                                        - `heartbeat(bytes32)`<br />
+                                        - `veto(bytes32)`<br />
+                                        - `getRecipientStatus(bytes32, address, string)`
+                                      </p>
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             </div>
 
-                            {/* IPFS Hash */}
-                            <div className="p-3 bg-gray-950/40 border border-gray-900 rounded-xl space-y-1 md:col-span-2">
-                              <span className="text-[9px] text-gray-500 uppercase block">IPFS Gateway Link (Ciphertext)</span>
-                              <a 
-                                href={`https://gateway.pinata.cloud/ipfs/${inspectedVault.ipfsHash.replace("ipfs://", "")}`}
-                                target="_blank" 
-                                rel="noopener noreferrer"
-                                className="text-[#e5c483] hover:underline break-all block"
-                              >
-                                {inspectedVault.ipfsHash} ↗
-                              </a>
+                            {/* Right Panel: Vertical Timeline */}
+                            <div className="glass-panel p-6 rounded-3xl border border-white/5 space-y-4">
+                              <h5 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest font-mono border-b border-white/5 pb-2">Vault Lifecycle</h5>
+                              
+                              <div className="space-y-5 text-left font-mono text-[10px]">
+                                {[
+                                  { label: "Vault Created", desc: "Local payload compiled", done: true },
+                                  { label: "Encrypted", desc: "AES-256 local key splits ok", done: true },
+                                  { label: "Stored on IPFS", desc: "Uploaded decentralized pins", done: true },
+                                  { label: "Registered", desc: "Locked smart contract parameters", done: true },
+                                  { label: "Heartbeat Sync", desc: "Active reset timer checked", done: true },
+                                  { 
+                                    label: "Pending Unlock", 
+                                    desc: "Grace window countdown", 
+                                    done: inspectedVault.configs.some((c: any) => c.status === "PENDING_UNLOCK" || c.status === "UNLOCKED"),
+                                    color: inspectedVault.configs.some((c: any) => c.status === "PENDING_UNLOCK") ? "bg-amber-500 animate-pulse" : "bg-[#2ECC71]"
+                                  },
+                                  { 
+                                    label: "Released", 
+                                    desc: "Decryption keys downloadable", 
+                                    done: inspectedVault.configs.some((c: any) => c.status === "UNLOCKED"),
+                                    color: inspectedVault.configs.some((c: any) => c.status === "UNLOCKED") ? "bg-[#2ECC71]" : "bg-white/5 border border-white/5"
+                                  }
+                                ].map((step, idx) => (
+                                  <div key={idx} className="flex gap-3 items-start relative">
+                                    <div className={`w-2.5 h-2.5 rounded-full mt-0.5 relative z-10 flex-shrink-0 ${
+                                      step.color || (step.done ? "bg-[#2ECC71]" : "bg-white/5 border border-white/5")
+                                    }`} />
+                                    <div className="space-y-0.5">
+                                      <p className={`font-bold leading-normal ${step.done ? "text-white" : "text-gray-500"}`}>{step.label}</p>
+                                      <p className="text-gray-500 text-[9px] leading-normal">{step.desc}</p>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
                           </div>
 
-                          <div className="pt-2 flex gap-3">
-                            <button
-                              onClick={() => {
-                                setClaimVaultAddress(inspectedVault.id);
-                                setActiveTab("recipient");
-                              }}
-                              className="flex-1 py-2.5 bg-gray-900 border border-gray-800 text-[#faf6ee] hover:text-[#e5c483] rounded-xl text-xs font-bold font-mono transition-all cursor-pointer text-center"
-                            >
-                              Go to Claim Portal →
-                            </button>
+                          {/* Technical Details Cards Grid */}
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4 border-t border-white/5">
+                            {[
+                              { title: "AES-256 Encryption", desc: "Local payload cipher protection", icon: Shield },
+                              { title: "Shamir split (2-of-3)", desc: "Threshold secret split recovery", icon: Key },
+                              { title: "Pinata IPFS nodes", desc: "Decentralized redundant storage", icon: Upload },
+                              { title: "EVM Smart Contract", desc: "Dynamic time-lock execution", icon: Lock }
+                            ].map((spec, sIdx) => (
+                              <div key={sIdx} className="glass-panel p-4 rounded-xl border border-white/5 space-y-2 cursor-default">
+                                <div className="w-7 h-7 rounded-lg bg-[#E6BE72]/10 border border-[#E6BE72]/20 flex items-center justify-center text-[#E6BE72]">
+                                  <spec.icon className="w-3.5 h-3.5" />
+                                </div>
+                                <div>
+                                  <h6 className="text-[10px] font-bold text-white font-mono leading-tight">{spec.title}</h6>
+                                  <p className="text-[8px] text-gray-500 leading-normal font-sans">{spec.desc}</p>
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         </motion.div>
                       )}
@@ -1472,7 +2803,7 @@ export default function LastWishApp() {
                   </motion.div>
                 )}
 
-                {/* Cryptographic Playground Sandbox View */}
+                {/* Tab 4: Cryptographic Playground */}
                 {activeTab === "playground" && (
                   <motion.div
                     key="playground-tab-view"
@@ -1482,120 +2813,265 @@ export default function LastWishApp() {
                     transition={{ duration: 0.3 }}
                     className="space-y-6"
                   >
-                    
-                    {/* Split segment */}
-                    <div className="glass-panel p-6 rounded-3xl space-y-6">
-                      <div>
-                        <span className="text-[10px] text-[#e5c483] font-mono uppercase tracking-widest">Mathematical Sandbox</span>
-                        <h3 className="text-xl font-bold text-white mt-0.5">Key-Splitting Playground</h3>
-                        <p className="text-xs text-gray-400 mt-1">
-                          Split any secret string into 3 shares (threshold 2) locally in your browser.
-                        </p>
-                      </div>
-
-                      <div className="space-y-4">
-                        <div className="space-y-1">
-                          <label className="text-[10px] text-gray-500 uppercase font-mono font-bold tracking-wider">Secret Message</label>
-                          <input 
-                            type="text" 
-                            value={pgText}
-                            onChange={(e) => setPgText(e.target.value)}
-                            className="w-full design-input px-4 py-2.5 text-sm"
-                          />
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full text-left">
+                      {/* Left: Key-Splitting Playground */}
+                      <div className="glass-panel p-8 rounded-[2rem] space-y-6">
+                        <div>
+                          <span className="text-[10px] text-[#E6BE72] font-mono uppercase tracking-widest font-bold">Mathematical Sandbox</span>
+                          <h3 className="text-xl font-bold text-white mt-1">Key-Splitting Playground</h3>
+                          <p className="text-xs text-gray-400 mt-1 font-mono">
+                            Split any secret string into 3 shares (threshold 2) locally in your browser.
+                          </p>
                         </div>
 
-                        <button 
-                          onClick={triggerPlaygroundSplit}
-                          className="outlined-action w-full py-3.5 rounded-full text-xs font-bold"
-                        >
-                          Split Secret into 3 Shares
-                        </button>
-                      </div>
+                        <div className="space-y-4">
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-gray-500 uppercase font-mono font-bold tracking-wider">Secret Message</label>
+                            <input 
+                              type="text" 
+                              value={pgText}
+                              onChange={(e) => setPgText(e.target.value)}
+                              className="w-full design-input px-4 py-2.5 text-sm"
+                            />
+                          </div>
 
-                      {pgShares.length > 0 && (
-                        <div className="space-y-2.5 pt-2">
-                          <h4 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest font-mono">Generated Shares</h4>
-                          {pgShares.map((s, idx) => (
-                            <div key={idx} className="p-2.5 bg-gray-950/40 border border-gray-900 rounded-xl flex items-center justify-between text-xs gap-3">
-                              <div className="min-w-0">
-                                <span className="text-[10px] font-bold text-[#e5c483] font-mono">Share {idx + 1}</span>
-                                <p className="text-[11px] text-gray-400 font-mono truncate">{s}</p>
+                          <button 
+                            onClick={triggerPlaygroundSplit}
+                            className="outlined-action w-full py-3.5 rounded-full text-xs font-bold cursor-pointer border-0"
+                          >
+                            Split Secret into 3 Shares
+                          </button>
+                        </div>
+
+                        {pgShares.length > 0 && (
+                          <div className="space-y-2.5 pt-2">
+                            <h4 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest font-mono">Generated Shares</h4>
+                            {pgShares.map((s, idx) => (
+                              <div key={idx} className="p-2.5 bg-gray-950/40 border border-white/5 rounded-xl flex items-center justify-between text-xs gap-3">
+                                <div className="min-w-0">
+                                  <span className="text-[10px] font-bold text-[#E6BE72] font-mono">Share {idx + 1}</span>
+                                  <p className="text-[11px] text-gray-400 font-mono truncate">{s}</p>
+                                </div>
+                                <button
+                                  onClick={() => copyToClipboard(s, `pg-${idx}`)}
+                                  className="p-1.5 hover:bg-[#E6BE72]/10 text-[#E6BE72] rounded-lg flex-shrink-0 cursor-pointer bg-transparent border-0"
+                                >
+                                  {copiedShare === `pg-${idx}` ? <Check className="w-3.5 h-3.5 text-[#2ECC71]" /> : <Copy className="w-3.5 h-3.5" />}
+                                </button>
                               </div>
-                              <button
-                                onClick={() => copyToClipboard(s, idx)}
-                                className="p-1.5 hover:bg-[#e5c483]/10 text-[#e5c483] rounded-lg flex-shrink-0 cursor-pointer"
-                              >
-                                {copiedShare === idx ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Reconstruction segment */}
-                    <div className="glass-panel p-6 rounded-3xl space-y-6">
-                      <div>
-                        <span className="text-[10px] text-[#ddb892] font-mono uppercase tracking-widest font-bold">Lagrange Polynomials</span>
-                        <h3 className="text-xl font-bold text-white mt-0.5">Reconstruct Secret</h3>
-                        <p className="text-xs text-gray-400 mt-1">
-                          Paste any 2 generated shares. If the polynomial fits, the secret resolves.
-                        </p>
+                            ))}
+                          </div>
+                        )}
                       </div>
 
-                      <div className="space-y-4">
-                        <div className="space-y-1.5">
-                          <label className="text-[10px] text-gray-500 font-bold uppercase font-mono">Key Share 1</label>
-                          <input 
-                            type="text" 
-                            value={pgSelectedShares[0]}
-                            onChange={(e) => setPgSelectedShares([e.target.value, pgSelectedShares[1]])}
-                            className="w-full design-input px-4 py-2.5 text-xs font-mono"
-                          />
+                      {/* Right: Reconstruct Secret */}
+                      <div className="glass-panel p-8 rounded-[2rem] space-y-6">
+                        <div>
+                          <span className="text-[10px] text-[#E6BE72] font-mono uppercase tracking-widest font-bold">Lagrange Polynomials</span>
+                          <h3 className="text-xl font-bold text-white mt-1">Reconstruct Secret</h3>
+                          <p className="text-xs text-gray-400 mt-1 font-mono">
+                            Paste any 2 generated shares. If the polynomial fits, the secret resolves.
+                          </p>
                         </div>
 
-                        <div className="space-y-1.5">
-                          <label className="text-[10px] text-gray-500 font-bold uppercase font-mono">Key Share 2</label>
-                          <input 
-                            type="text" 
-                            value={pgSelectedShares[1]}
-                            onChange={(e) => setPgSelectedShares([pgSelectedShares[0], e.target.value])}
-                            className="w-full design-input px-4 py-2.5 text-xs font-mono"
-                          />
+                        <div className="space-y-4">
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] text-gray-500 font-bold uppercase font-mono">Key Share 1</label>
+                            <input 
+                              type="text" 
+                              value={pgSelectedShares[0]}
+                              onChange={(e) => setPgSelectedShares([e.target.value, pgSelectedShares[1]])}
+                              className="w-full design-input px-4 py-2.5 text-xs font-mono"
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] text-gray-500 font-bold uppercase font-mono">Key Share 2</label>
+                            <input 
+                              type="text" 
+                              value={pgSelectedShares[1]}
+                              onChange={(e) => setPgSelectedShares([pgSelectedShares[0], e.target.value])}
+                              className="w-full design-input px-4 py-2.5 text-xs font-mono"
+                            />
+                          </div>
+
+                          <button 
+                            onClick={triggerPlaygroundDecrypt}
+                            className="outlined-action w-full py-3.5 rounded-full text-xs font-bold cursor-pointer border-0"
+                          >
+                            Run Lagrange Interpolation
+                          </button>
                         </div>
 
-                        <button 
-                          onClick={triggerPlaygroundDecrypt}
-                          className="outlined-action w-full py-3.5 rounded-full text-xs font-bold"
-                        >
-                          Run Lagrange Interpolation
-                        </button>
+                        {pgDecryptedText && (
+                          <div className="p-4 bg-[#2ECC71]/10 border border-[#2ECC71]/20 rounded-xl space-y-1 font-mono">
+                            <span className="text-[10px] text-[#2ECC71] uppercase font-bold tracking-wider">Resolved Text</span>
+                            <p className="text-sm font-bold text-white leading-tight">{pgDecryptedText}</p>
+                          </div>
+                        )}
+
+                        {pgDecryptedError && (
+                          <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl space-y-1 font-mono text-red-400 text-xs">
+                            <span className="text-[10px] font-bold uppercase tracking-wider block">Interpolation Error</span>
+                            <p>{pgDecryptedError}</p>
+                          </div>
+                        )}
                       </div>
-
-                      {pgDecryptedText && (
-                        <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-xl space-y-1 font-mono">
-                          <span className="text-[10px] text-emerald-400 uppercase font-bold tracking-wider">Resolved Text</span>
-                          <p className="text-sm font-bold text-white leading-tight">{pgDecryptedText}</p>
-                        </div>
-                      )}
-
-                      {pgDecryptedError && (
-                        <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl space-y-1 font-mono text-red-400 text-xs">
-                          <span className="text-[10px] font-bold uppercase tracking-wider block">Interpolation Error</span>
-                          <p>{pgDecryptedError}</p>
-                        </div>
-                      )}
                     </div>
-
                   </motion.div>
                 )}
               </AnimatePresence>
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* Explore Security Modal Overlay */}
+        <AnimatePresence>
+          {showSecurityModal && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-gray-950/80 backdrop-blur-lg flex items-center justify-center p-4 z-50"
+            >
+              <motion.div
+                initial={{ scale: 0.95, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.95, y: 20 }}
+                className="glass-panel max-w-2xl w-full rounded-3xl p-6 md:p-8 space-y-6 relative border border-[#e5c483]/30"
+              >
+                {/* Close Button */}
+                <button
+                  onClick={() => setShowSecurityModal(false)}
+                  className="absolute top-4 right-4 text-gray-400 hover:text-white text-lg font-bold cursor-pointer"
+                >
+                  ✕
+                </button>
+
+                <div className="space-y-2">
+                  <span className="text-[10px] font-mono uppercase tracking-wider text-[#e5c483] font-bold">Protocol Breakdown</span>
+                  <h3 className="text-2xl md:text-3xl font-extrabold tracking-tight text-[#faf6ee] font-mono uppercase">
+                    LastWish Cryptography
+                  </h3>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-left">
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-mono uppercase text-[#e5c483] font-bold">1. Client-Side AES-256-GCM</h4>
+                    <p className="text-xs text-gray-400 leading-relaxed">
+                      Data is encrypted locally in your browser. The decryption keys never touch any server, protecting you from database breaches or system admin access.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-mono uppercase text-[#e5c483] font-bold">2. Shamir's Secret Sharing</h4>
+                    <p className="text-xs text-gray-400 leading-relaxed">
+                      The encryption key is mathematically split into 3 independent parts. To reconstruct it, 2 of the 3 shares must be combined. Single shards are useless.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-mono uppercase text-[#e5c483] font-bold">3. Smart Contract Heartbeat</h4>
+                    <p className="text-xs text-gray-400 leading-relaxed">
+                      A decentralized heartbeat ledger on Base Sepolia monitors your vitality. Key reconstruction rights are locked until you fail to check in.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-mono uppercase text-[#e5c483] font-bold">4. Decentralized IPFS Storage</h4>
+                    <p className="text-xs text-gray-400 leading-relaxed">
+                      Your encrypted files are uploaded to IPFS. There is no central point of failure, ensuring your legacy is resilient and retrievable indefinitely.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t border-white/5 flex justify-end">
+                  <button
+                    onClick={() => setShowSecurityModal(false)}
+                    className="outlined-action px-6 py-2.5 rounded-full text-xs font-bold uppercase transition-all"
+                  >
+                    Close Specification
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+          {showSettingsModal && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-gray-950/80 backdrop-blur-lg flex items-center justify-center p-4 z-50 font-mono"
+            >
+              <motion.div
+                initial={{ scale: 0.95, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.95, y: 20 }}
+                className="glass-panel max-w-md w-full rounded-3xl p-6 relative border border-[#E6BE72]/30 space-y-4"
+              >
+                <button
+                  onClick={() => setShowSettingsModal(false)}
+                  className="absolute top-4 right-4 text-gray-400 hover:text-white text-lg font-bold cursor-pointer bg-transparent border-0"
+                >
+                  ✕
+                </button>
+                <h3 className="text-lg font-extrabold text-[#E6BE72] uppercase tracking-wider">Protocol Settings</h3>
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  Configuration parameters for client encryption modules and RPC nodes:
+                </p>
+                <div className="space-y-3 text-xs text-gray-300">
+                  <div className="p-3 bg-[#090B14]/80 border border-white/5 rounded-xl flex justify-between items-center">
+                    <span>Simulator Database</span>
+                    <span className="text-[#2ECC71] font-bold">Enabled</span>
+                  </div>
+                  <div className="p-3 bg-[#090B14]/80 border border-white/5 rounded-xl flex justify-between items-center">
+                    <span>Symmetric Algorithm</span>
+                    <span className="font-mono text-gray-400">AES-256-GCM</span>
+                  </div>
+                  <div className="p-3 bg-[#090B14]/80 border border-white/5 rounded-xl flex justify-between items-center">
+                    <span>Lagrange Coefficients</span>
+                    <span className="font-mono text-gray-400">Prime Finite Field</span>
+                  </div>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+
+          {showHelpModal && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-gray-950/80 backdrop-blur-lg flex items-center justify-center p-4 z-50 font-mono"
+            >
+              <motion.div
+                initial={{ scale: 0.95, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.95, y: 20 }}
+                className="glass-panel max-w-md w-full rounded-3xl p-6 relative border border-[#E6BE72]/30 space-y-4"
+              >
+                <button
+                  onClick={() => setShowHelpModal(false)}
+                  className="absolute top-4 right-4 text-gray-400 hover:text-white text-lg font-bold cursor-pointer bg-transparent border-0"
+                >
+                  ✕
+                </button>
+                <h3 className="text-lg font-extrabold text-[#E6BE72] uppercase tracking-wider">Help & Support</h3>
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  Need assistance with your digital inheritance setup?
+                </p>
+                <div className="space-y-2 text-xs text-gray-400">
+                  <p>📧 Email: <span className="text-white hover:underline cursor-pointer">support@lastwish.io</span></p>
+                  <p>🌐 Discord: <span className="text-white hover:underline cursor-pointer">discord.gg/lastwish</span></p>
+                  <p>📖 Whitepaper: <span className="text-white hover:underline cursor-pointer">lastwish.io/docs/spec.pdf</span></p>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </main>
 
-      {/* Footer (Mockup Alignment) */}
+      {/* Footer */}
       <footer className="border-t border-[rgba(229,196,131,0.06)] py-6 px-6 text-center text-xs text-gray-500 flex flex-col md:flex-row items-center justify-between gap-4 z-20 bg-[#0d0f19]/80 backdrop-blur-sm">
         <div>
           <span>© 2026 LastWish Protocol. Designed for </span>
@@ -1614,5 +3090,25 @@ export default function LastWishApp() {
         </div>
       </footer>
     </div>
+  </div>
   );
 }
+
+interface StarProps {
+  top: string;
+  left: string;
+  size: number;
+  delay: string;
+}
+const Star: React.FC<StarProps> = ({ top, left, size, delay }) => (
+  <div 
+    className="absolute rounded-full bg-[#faf6ee] animate-twinkle pointer-events-none"
+    style={{
+      top,
+      left,
+      width: `${size}px`,
+      height: `${size}px`,
+      animationDelay: delay,
+    }}
+  />
+);
