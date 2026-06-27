@@ -70,7 +70,10 @@ export async function downloadFromIPFS(cid: string): Promise<EncryptedPayload> {
   if (typeof window !== "undefined") {
     try {
       const origin = window.location.origin;
-      const simUrl = `${origin}/api/ipfs?cid=${cleanCid}`;
+      const customGateway = localStorage.getItem("lastwish_custom_ipfs_gateway") || "";
+      const simUrl = customGateway 
+        ? `${origin}/api/ipfs?cid=${cleanCid}&gateway=${encodeURIComponent(customGateway)}`
+        : `${origin}/api/ipfs?cid=${cleanCid}`;
       const response = await fetch(simUrl);
       if (response.ok) {
         return await response.json();

@@ -9,13 +9,22 @@ export async function GET(request: Request) {
     }
 
     const cleanCid = cid.replace("ipfs://", "").trim();
-    const gateways = [
+    const customGateway = searchParams.get("gateway");
+    const gateways = [];
+
+    if (customGateway) {
+      const cleanCustom = customGateway.trim();
+      const base = cleanCustom.endsWith("/") ? cleanCustom : `${cleanCustom}/`;
+      gateways.push(`${base}${cleanCid}`);
+    }
+
+    gateways.push(
       `https://ipfs.io/ipfs/${cleanCid}`,
       `https://cloudflare-ipfs.com/ipfs/${cleanCid}`,
       `https://gateway.pinata.cloud/ipfs/${cleanCid}`,
       `https://dweb.link/ipfs/${cleanCid}`,
       `https://w3s.link/ipfs/${cleanCid}`
-    ];
+    );
 
     let lastError = null;
     for (const url of gateways) {
