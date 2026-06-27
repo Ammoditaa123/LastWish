@@ -88,125 +88,7 @@ const heroAssets = [
   { id: "messages", label: "Letters & Messages", icon: Mail },
 ];
 
-interface ScrambledTextProps {
-  radius?: number;
-  duration?: number;
-  speed?: number;
-  scrambleChars?: string;
-  className?: string;
-  style?: React.CSSProperties;
-  children: React.ReactNode;
-}
 
-const ScrambledText: React.FC<ScrambledTextProps> = ({
-  radius = 100,
-  duration = 1.2,
-  speed = 1.5,
-  scrambleChars = '.:',
-  className = '',
-  style = {},
-  children
-}) => {
-  const rootRef = React.useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    const root = rootRef.current;
-    if (!root) return;
-
-    const originalHTML = root.innerHTML;
-
-    // Helper to find all text nodes recursively
-    const textNodes: Text[] = [];
-    const findTextNodes = (node: Node) => {
-      if (node.nodeName === 'SCRIPT' || node.nodeName === 'STYLE') return;
-      if (node.nodeType === Node.TEXT_NODE) {
-        if (node.nodeValue && node.nodeValue.replace(/\s/g, '').length > 0) {
-          textNodes.push(node as Text);
-        }
-      } else {
-        node.childNodes.forEach(findTextNodes);
-      }
-    };
-    findTextNodes(root);
-
-    // Split text nodes into character spans
-    const spans: HTMLSpanElement[] = [];
-    textNodes.forEach(node => {
-      const text = node.nodeValue || '';
-      const parent = node.parentNode;
-      if (!parent) return;
-
-      const fragment = document.createDocumentFragment();
-      for (const char of text) {
-        const span = document.createElement('span');
-        span.className = 'inline-block will-change-transform';
-        span.dataset.content = char;
-        span.innerText = char;
-        if (char === ' ') {
-          span.innerHTML = '&nbsp;';
-        }
-        fragment.appendChild(span);
-        spans.push(span);
-      }
-      parent.replaceChild(fragment, node);
-    });
-
-    const activeScrambles = new Map<HTMLElement, { timer: any; resolveTimer: any }>();
-
-    const handleMove = (e: PointerEvent) => {
-      spans.forEach(span => {
-        const { left, top, width, height } = span.getBoundingClientRect();
-        const dx = e.clientX - (left + width / 2);
-        const dy = e.clientY - (top + height / 2);
-        const dist = Math.hypot(dx, dy);
-
-        if (dist < radius) {
-          if (!activeScrambles.has(span)) {
-            const originalChar = span.dataset.content || '';
-            if (originalChar.trim() === '') return;
-
-            let intervalId: any;
-            let timeoutId: any;
-
-            intervalId = setInterval(() => {
-              span.innerText = scrambleChars[Math.floor(Math.random() * scrambleChars.length)];
-            }, 60 / speed);
-
-            const resolveTime = duration * 1000 * (1 - dist / radius);
-            timeoutId = setTimeout(() => {
-              clearInterval(intervalId);
-              span.innerText = originalChar;
-              activeScrambles.delete(span);
-            }, Math.max(150, resolveTime));
-
-            activeScrambles.set(span, { timer: intervalId, resolveTimer: timeoutId });
-          }
-        }
-      });
-    };
-
-    root.addEventListener('pointermove', handleMove);
-
-    return () => {
-      root.removeEventListener('pointermove', handleMove);
-      activeScrambles.forEach(val => {
-        clearInterval(val.timer);
-        clearTimeout(val.resolveTimer);
-      });
-      root.innerHTML = originalHTML;
-    };
-  }, [radius, duration, speed, scrambleChars]);
-
-  return (
-    <div
-      ref={rootRef}
-      className={className}
-      style={style}
-    >
-      {children}
-    </div>
-  );
-};
 
 export default function LastWishApp() {
   const [showLanding, setShowLanding] = useState<boolean>(true);
@@ -1418,12 +1300,12 @@ export default function LastWishApp() {
                       Protocol v2.1 Active
                     </span>
                     
-                    <ScrambledText className="text-5xl md:text-7xl font-extrabold tracking-tight leading-[1.05] text-[#faf6ee] font-sans cursor-default">
+                    <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight leading-[1.05] text-[#faf6ee] font-sans">
                       Your Digital Legacy.<br />
                       <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#E6BE72] via-[#E6BE72]/85 to-[#faf6ee]">
                         Secured Beyond Time.
                       </span>
-                    </ScrambledText>
+                    </h1>
                     
                     <p className="text-gray-400 text-sm md:text-base leading-relaxed">
                       Store memories, important documents, and digital assets securely. LastWish ensures your legacy reaches the right people at the right moment.
