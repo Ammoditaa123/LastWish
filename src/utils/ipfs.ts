@@ -66,6 +66,20 @@ export async function downloadFromIPFS(cid: string): Promise<EncryptedPayload> {
   // Remove custom prefixes (e.g. "ipfs://")
   const cleanCid = cid.replace("ipfs://", "").trim();
 
+  // Try server-side proxy first to bypass browser CORS / rate limits
+  if (typeof window !== "undefined") {
+    try {
+      const origin = window.location.origin;
+      const simUrl = `${origin}/api/ipfs?cid=${cleanCid}`;
+      const response = await fetch(simUrl);
+      if (response.ok) {
+        return await response.json();
+      }
+    } catch (e) {
+      console.warn("Server-side IPFS proxy fetch failed, falling back to direct browser gateways:", e);
+    }
+  }
+
   // Try multiple gateways for redundancy
   const gateways: string[] = [];
 

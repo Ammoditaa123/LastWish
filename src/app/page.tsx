@@ -126,6 +126,17 @@ export default function LastWishApp() {
   const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
   const [showHelpModal, setShowHelpModal] = useState<boolean>(false);
 
+  // Custom Settings inputs
+  const [settingsPinataJwt, setSettingsPinataJwt] = useState<string>("");
+  const [settingsCustomGateway, setSettingsCustomGateway] = useState<string>("");
+
+  useEffect(() => {
+    if (showSettingsModal && typeof window !== "undefined") {
+      setSettingsPinataJwt(localStorage.getItem("lastwish_pinata_jwt") || "");
+      setSettingsCustomGateway(localStorage.getItem("lastwish_custom_ipfs_gateway") || "");
+    }
+  }, [showSettingsModal]);
+
   // Background stars
   const [stars, setStars] = useState<Array<{ top: string; left: string; size: number; delay: string }>>([]);
   useEffect(() => {
@@ -706,6 +717,24 @@ export default function LastWishApp() {
     }
   };
 
+  const parseManualPayload = (input: string, category: string): EncryptedPayload => {
+    const parsed = JSON.parse(input.trim());
+    if (parsed.configs && Array.isArray(parsed.configs)) {
+      const match = parsed.configs.find((c: any) => c.category.toLowerCase() === category.toLowerCase());
+      if (match && match.rawEncryptedPayload) {
+        return match.rawEncryptedPayload;
+      } else if (match && match.payload) {
+        return match.payload;
+      } else {
+        throw new Error(`Pasted backup JSON does not contain payload for category '${category}'.`);
+      }
+    } else if (parsed.iv && parsed.data) {
+      return parsed;
+    } else {
+      throw new Error("Pasted JSON is not a valid payload.");
+    }
+  };
+
   // Decrypt recipient categories in portal
   const handleDecryptVault = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -817,7 +846,7 @@ export default function LastWishApp() {
           // 2. Download from IPFS or use manual fallback
           if (manualPayloadInput.trim()) {
             try {
-              payloadToUse = JSON.parse(manualPayloadInput.trim());
+              payloadToUse = parseManualPayload(manualPayloadInput, item.category);
             } catch (e: any) {
               throw new Error(`Failed to parse manual payload JSON: ${e.message}`);
             }
@@ -839,7 +868,7 @@ export default function LastWishApp() {
           // Load local simulated payload or manual fallback
           if (manualPayloadInput.trim()) {
             try {
-              payloadToUse = JSON.parse(manualPayloadInput.trim());
+              payloadToUse = parseManualPayload(manualPayloadInput, item.category);
             } catch (e: any) {
               throw new Error(`Failed to parse manual payload JSON: ${e.message}`);
             }
@@ -2516,9 +2545,18 @@ export default function LastWishApp() {
                         )}
 
                         {decryptionError && (
-                          <div className="p-4 bg-red-500/10 border border-[#FF5A5F]/20 rounded-2xl flex items-center space-x-2.5 text-xs text-[#FF5A5F] font-mono">
-                            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-                            <span className="break-all">{decryptionError}</span>
+                          <div className="p-4 bg-red-500/10 border border-[#FF5A5F]/20 rounded-2xl flex flex-col space-y-2 text-xs text-[#FF5A5F] font-mono">
+                            <div className="flex items-start space-x-2.5">
+                              <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                              <span className="break-all font-bold">{decryptionError}</span>
+                            </div>
+                            {decryptionError.includes("Failed to retrieve IPFS payload") && (
+                              <p className="text-[10px] text-gray-400 font-normal leading-relaxed mt-1 border-t border-white/5 pt-2">
+                                💡 <strong>Why this happens:</strong> If the capsule was deployed while in simulation mode (no Pinata JWT configured in Settings), the encrypted payload was only saved in the creator's browser storage. Because it wasn't published to the actual IPFS network, other browsers cannot retrieve it.
+                                <br /><br />
+                                <strong>Solution:</strong> Paste your <strong>Pinata JWT Token</strong> in the Settings modal (bottom-left corner), create a new capsule, and try claiming again to test real IPFS synchronization.
+                              </p>
+                            )}
                           </div>
                         )}
                       </div>
@@ -3143,6 +3181,38 @@ export default function LastWishApp() {
                   <div className="p-3 bg-[#090B14]/80 border border-white/5 rounded-xl flex justify-between items-center">
                     <span>Lagrange Coefficients</span>
                     <span className="font-mono text-gray-400">Prime Finite Field</span>
+                  </div>
+                </div>
+
+                <div className="space-y-3.5 pt-2 border-t border-white/5 text-left text-xs font-mono">
+                  <div className="space-y-1">
+                    <label className="text-[9px] text-[#E6BE72] uppercase font-bold tracking-wider block">Pinata JWT Token (Real IPFS)</label>
+                    <input 
+                      type="password"
+                      placeholder="Paste your Pinata JWT token..."
+                      value={settingsPinataJwt}
+                      onChange={(e) => {
+                        setSettingsPinataJwt(e.target.value);
+                        localStorage.setItem("lastwish_pinata_jwt", e.target.value);
+                      }}
+                      className="w-full design-input px-3.5 py-2 text-xs bg-gray-950 border border-white/5 text-gray-300 rounded-xl"
+                    />
+                    <span className="text-[8px] text-gray-500 leading-normal block">Allows deploying capsules directly to the actual decentralized IPFS network.</span>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[9px] text-[#E6BE72] uppercase font-bold tracking-wider block">Custom IPFS Gateway URL</label>
+                    <input 
+                      type="text"
+                      placeholder="e.g., https://my-gateway.mypinata.cloud/ipfs/"
+                      value={settingsCustomGateway}
+                      onChange={(e) => {
+                        setSettingsCustomGateway(e.target.value);
+                        localStorage.setItem("lastwish_custom_ipfs_gateway", e.target.value);
+                      }}
+                      className="w-full design-input px-3.5 py-2 text-xs bg-gray-950 border border-white/5 text-gray-300 rounded-xl"
+                    />
+                    <span className="text-[8px] text-gray-500 leading-normal block">Use your own Pinata dedicated gateway to bypass public CORS rate limits.</span>
                   </div>
                 </div>
               </motion.div>
