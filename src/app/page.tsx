@@ -23,6 +23,10 @@ import {
   Check,
   Search,
   Eye,
+  Image,
+  Video,
+  Music,
+  MessageSquare,
   Download,
   File,
   Wallet,
@@ -75,6 +79,15 @@ interface CategoryConfigInput {
   fileType?: string;
 }
 
+const heroAssets = [
+  { id: "docs", label: "PDF / Documents", icon: FileText },
+  { id: "images", label: "Images", icon: Image },
+  { id: "videos", label: "Videos", icon: Video },
+  { id: "audio", label: "Audio", icon: Music },
+  { id: "wallet", label: "Crypto Wallet", icon: Wallet },
+  { id: "messages", label: "Letters & Messages", icon: Mail },
+];
+
 export default function LastWishApp() {
   const [showLanding, setShowLanding] = useState<boolean>(true);
   const [activeTab, setActiveTab] = useState<"owner" | "recipient" | "inspector" | "playground">("owner");
@@ -99,6 +112,15 @@ export default function LastWishApp() {
   
   const rotateXVal = useTransform(tiltYSpring, [-0.5, 0.5], [8, -8]);
   const rotateYVal = useTransform(tiltXSpring, [-0.5, 0.5], [-8, 8]);
+
+  const lockParallaxX = useTransform(tiltXSpring, [-0.5, 0.5], [-10, 10]);
+  const lockParallaxY = useTransform(tiltYSpring, [-0.5, 0.5], [-10, 10]);
+
+  const assetsParallaxX = useTransform(tiltXSpring, [-0.5, 0.5], [-20, 20]);
+  const assetsParallaxY = useTransform(tiltYSpring, [-0.5, 0.5], [-20, 20]);
+
+  const bgParallaxX = useTransform(tiltXSpring, [-0.5, 0.5], [12, -12]);
+  const bgParallaxY = useTransform(tiltYSpring, [-0.5, 0.5], [12, -12]);
 
   const handleCardMouseMove = (event: React.MouseEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -1327,128 +1349,272 @@ export default function LastWishApp() {
                   </div>
                 </div>
 
-                {/* Right Column: Holographic Orbiting Vault Card */}
-                <div className="flex-1 flex items-center justify-center relative w-full min-h-[400px] select-none">
-                  {/* Glowing background aura */}
-                  <div className="absolute w-64 h-64 rounded-full bg-[#E6BE72]/5 blur-3xl animate-pulse" />
-
-                  {/* Holographic vault card container */}
-                  <motion.div
-                    onMouseMove={handleCardMouseMove}
-                    onMouseEnter={() => setIsCardHovered(true)}
-                    onMouseLeave={handleCardMouseLeave}
+                {/* Right Column: Premium Holographic 3D Orbiting Lock Animation */}
+                <div 
+                  onMouseMove={handleCardMouseMove}
+                  onMouseEnter={() => setIsCardHovered(true)}
+                  onMouseLeave={handleCardMouseLeave}
+                  className="flex-1 flex items-center justify-center relative w-full min-h-[500px] select-none cursor-default py-8"
+                >
+                  {/* Glowing central radial background behind lock */}
+                  <div 
+                    className="absolute w-80 h-80 rounded-full bg-gradient-to-r from-[#E6BE72]/10 via-transparent to-[#7C5CFF]/10 blur-3xl pointer-events-none transition-all duration-700"
                     style={{
-                      rotateX: rotateXVal,
-                      rotateY: rotateYVal,
+                      transform: isCardHovered ? 'scale(1.2)' : 'scale(1)',
+                      opacity: isCardHovered ? 0.95 : 0.6
+                    }}
+                  />
+
+                  {/* Blurred gold & purple slow-moving ambient light blobs */}
+                  <motion.div
+                    style={{
+                      x: bgParallaxX,
+                      y: bgParallaxY,
+                    }}
+                    className="absolute inset-0 pointer-events-none overflow-hidden"
+                  >
+                    <div 
+                      className="absolute top-12 left-12 w-64 h-64 rounded-full bg-[#7C5CFF]/5 blur-[100px] mix-blend-screen animate-pulse" 
+                      style={{ animationDuration: '10s' }}
+                    />
+                    <div 
+                      className="absolute bottom-12 right-12 w-72 h-72 rounded-full bg-[#E6BE72]/4 blur-[110px] mix-blend-screen animate-pulse"
+                      style={{ animationDuration: '14s', animationDelay: '1.5s' }}
+                    />
+                  </motion.div>
+
+                  {/* Slow drifting micro stardust particles */}
+                  <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                    {Array.from({ length: 8 }).map((_, i) => {
+                      const size = Math.random() * 2 + 0.8;
+                      const delay = Math.random() * 6;
+                      const duration = 15 + Math.random() * 10;
+                      const left = 15 + Math.random() * 70;
+                      const top = 15 + Math.random() * 70;
+                      return (
+                        <div
+                          key={i}
+                          className="absolute rounded-full bg-[#E6BE72]/20 blur-[0.2px] animate-float-slow"
+                          style={{
+                            width: size,
+                            height: size,
+                            left: `${left}%`,
+                            top: `${top}%`,
+                            animationDelay: `${delay}s`,
+                            animationDuration: `${duration}s`
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+
+                  {/* Connection Network & Orbiting Assets */}
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                    {heroAssets.map((asset, idx) => {
+                      const baseAngle = (idx * 360) / heroAssets.length;
+                      const orbitDuration = 24 + idx * 2.5; // slow independent speeds (24s to 36.5s per rev)
+                      const radius = isCardHovered ? 168 : 160;
+
+                      return (
+                        <div
+                          key={asset.id}
+                          className="absolute inset-0 flex items-center justify-center pointer-events-none"
+                        >
+                          {/* 1. Orbit Rotation Container */}
+                          <div
+                            className="absolute w-full h-full flex items-center justify-center"
+                            style={{
+                              animation: `spin-clockwise ${orbitDuration}s linear infinite`,
+                              transform: `rotate(${baseAngle}deg)`
+                            }}
+                          >
+                            {/* Connection network thin line (stretches and brightens on hover) */}
+                            <svg className="absolute overflow-visible pointer-events-none" style={{ width: 1, height: radius, transform: 'rotate(0deg)' }}>
+                              <defs>
+                                <linearGradient id={`line-glow-${idx}`} x1="0%" y1="100%" x2="0%" y2="0%">
+                                  <stop offset="0%" stopColor="#E6BE72" stopOpacity="0" />
+                                  <stop offset="35%" stopColor="#E6BE72" stopOpacity="0.04" />
+                                  <stop offset="100%" stopColor="#E6BE72" stopOpacity="0.25" />
+                                </linearGradient>
+                              </defs>
+                              <line 
+                                x1="0" 
+                                y1={radius} 
+                                x2="0" 
+                                y2="0" 
+                                stroke={`url(#line-glow-${idx})`} 
+                                strokeWidth="0.75" 
+                                strokeDasharray="3 3"
+                                className="transition-all duration-700"
+                                style={{
+                                  opacity: isCardHovered ? 0.95 : 0.65
+                                }}
+                              />
+                            </svg>
+
+                            {/* 2. Position wrapper at current radius */}
+                            <div
+                              style={{
+                                transform: `translateY(-${radius}px) rotate(-${baseAngle}deg)`,
+                              }}
+                              className="pointer-events-auto transition-transform duration-700"
+                            >
+                              {/* 3. Reverse rotation wrapper to keep cards upright */}
+                              <div
+                                style={{
+                                  animation: `spin-counter-clockwise ${orbitDuration}s linear infinite`,
+                                }}
+                              >
+                                {/* 4. Interactive Glassmorphism Card with Parallax cursor translation */}
+                                <motion.div
+                                  style={{
+                                    x: assetsParallaxX,
+                                    y: assetsParallaxY,
+                                    background: "rgba(20, 24, 38, 0.55)",
+                                    backdropFilter: "blur(20px)",
+                                    border: "1px solid rgba(255, 255, 255, 0.08)",
+                                    boxShadow: "0 10px 35px rgba(0, 0, 0, 0.35)",
+                                    borderRadius: "18px"
+                                  }}
+                                  whileHover={{
+                                    scale: 1.08,
+                                    borderColor: "rgba(230, 190, 114, 0.25)",
+                                    boxShadow: "0 15px 40px rgba(230, 190, 114, 0.15)"
+                                  }}
+                                  className="w-14 h-14 flex flex-col items-center justify-center cursor-pointer transition-all duration-300 relative group"
+                                  title={asset.label}
+                                >
+                                  {/* Soft inner glow */}
+                                  <div className="absolute inset-0 rounded-[18px] bg-gradient-to-br from-white/5 to-transparent pointer-events-none" />
+                                  
+                                  {/* Icon container */}
+                                  <div className="text-gray-300 group-hover:text-[#E6BE72] transition-colors duration-300 flex items-center justify-center">
+                                    <asset.icon className="w-5 h-5" />
+                                  </div>
+                                </motion.div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Central Lock Element with Pulse, float bobbing, and custom golden styling */}
+                  <motion.div
+                    style={{
+                      x: lockParallaxX,
+                      y: lockParallaxY,
                       transformStyle: "preserve-3d",
-                      perspective: 1000
+                      perspective: 1000,
+                      z: 50
                     }}
                     animate={{
-                      y: isCardHovered ? 0 : [0, -6, 0],
-                      rotateX: isCardHovered ? undefined : [0, 1.5, 0],
-                      rotateY: isCardHovered ? undefined : [0, -1.5, 0],
-                      scale: isCardHovered ? 1.03 : 1,
-                      boxShadow: isCardHovered
-                        ? "0 25px 50px -12px rgba(230, 190, 114, 0.25), 0 0 30px rgba(230, 190, 114, 0.15)"
-                        : "0 10px 30px -10px rgba(0, 0, 0, 0.5), 0 0 15px rgba(230, 190, 114, 0.05)"
+                      y: [0, -4, 0],
+                      rotate: [0, 1.5, 0, -1.5, 0],
                     }}
-                    transition={isCardHovered ? {
-                      type: "spring",
-                      stiffness: 300,
-                      damping: 25,
-                      scale: { duration: 0.15 }
-                    } : {
+                    transition={{
                       y: {
                         repeat: Infinity,
-                        duration: 4,
+                        duration: 5.5,
                         ease: "easeInOut"
                       },
-                      rotateX: {
+                      rotate: {
                         repeat: Infinity,
-                        duration: 6,
-                        ease: "easeInOut"
-                      },
-                      rotateY: {
-                        repeat: Infinity,
-                        duration: 6,
+                        duration: 11,
                         ease: "easeInOut"
                       }
                     }}
-                    className="relative w-80 h-96 rounded-3xl glass-panel p-6 flex flex-col items-center justify-between border border-[#E6BE72]/20 backdrop-blur-2xl cursor-pointer select-none"
+                    className="relative z-30 flex items-center justify-center p-8 rounded-full cursor-pointer"
                   >
-                    
-                    {/* Status Indicator */}
-                    <div className="w-full flex items-center justify-between border-b border-white/5 pb-3">
-                      <span className="text-[9px] font-mono text-gray-500 uppercase tracking-widest text-[#E6BE72] font-bold">Decentralized Escrow</span>
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                        <span className="text-[9px] font-mono text-gray-400 uppercase font-bold">PROTOCOL READY</span>
-                      </div>
-                    </div>
+                    {/* Glowing lock ring backing */}
+                    <div 
+                      className="absolute -inset-8 rounded-full bg-gradient-to-r from-[#E6BE72]/15 to-[#7C5CFF]/15 blur-2xl pointer-events-none transition-all duration-700"
+                      style={{
+                        transform: isCardHovered ? 'scale(1.2)' : 'scale(1)',
+                        opacity: isCardHovered ? 0.9 : 0.65
+                      }}
+                    />
 
-                    {/* Vault Lock and Orbiting Tags */}
-                    <div className="relative my-auto flex items-center justify-center w-full h-48">
+                    {/* Highly polished golden reflection lock body SVG */}
+                    <svg viewBox="0 0 120 120" className="w-24 h-24 drop-shadow-[0_0_35px_rgba(230,190,114,0.4)] transition-transform duration-500 hover:scale-105">
+                      <defs>
+                        {/* Gold Metallic Gradients */}
+                        <linearGradient id="gold-metallic" x1="0%" y1="0%" x2="100%" y2="100%">
+                          <stop offset="0%" stopColor="#FFF1D0" />
+                          <stop offset="30%" stopColor="#E6BE72" />
+                          <stop offset="70%" stopColor="#9C7A3C" />
+                          <stop offset="100%" stopColor="#F5D797" />
+                        </linearGradient>
+                        <linearGradient id="gold-shackle" x1="100%" y1="0%" x2="0%" y2="100%">
+                          <stop offset="0%" stopColor="#E6BE72" />
+                          <stop offset="50%" stopColor="#FFF5DF" />
+                          <stop offset="100%" stopColor="#B39252" />
+                        </linearGradient>
+                        {/* Dark Inner Shield */}
+                        <linearGradient id="lock-inner" x1="0%" y1="0%" x2="100%" y2="100%">
+                          <stop offset="0%" stopColor="#1E2030" />
+                          <stop offset="100%" stopColor="#0B0C15" />
+                        </linearGradient>
+                        {/* Gold Bevel highlight */}
+                        <linearGradient id="gold-stroke" x1="0%" y1="0%" x2="100%" y2="0%">
+                          <stop offset="0%" stopColor="#FFF" stopOpacity="0.8" />
+                          <stop offset="50%" stopColor="#E6BE72" stopOpacity="0.2" />
+                          <stop offset="100%" stopColor="#9C7A3C" stopOpacity="0.9" />
+                        </linearGradient>
+                      </defs>
+
+                      {/* Shackle */}
+                      <path
+                        d="M 36 45 L 36 28 C 36 15, 84 15, 84 28 L 84 45"
+                        fill="none"
+                        stroke="url(#gold-shackle)"
+                        strokeWidth="8"
+                        strokeLinecap="round"
+                      />
+
+                      {/* Main Lock Body */}
+                      <rect
+                        x="18"
+                        y="40"
+                        width="84"
+                        height="64"
+                        rx="16"
+                        fill="url(#gold-stroke)"
+                      />
+                      <rect
+                        x="20"
+                        y="42"
+                        width="80"
+                        height="60"
+                        rx="14"
+                        fill="url(#gold-metallic)"
+                      />
                       
-                      {/* Clockwise spinning orbiting container */}
-                      <div className="absolute w-80 h-80 flex items-center justify-center animate-orbit-cw pointer-events-none">
-                        {["Letters", "Documents", "Photos", "Videos", "Crypto", "Medical Files", "Passwords"].map((tag, idx, arr) => {
-                          const angle = (idx * 360) / arr.length;
-                          return (
-                            <div
-                              key={idx}
-                              className="absolute text-[8px] font-mono font-bold tracking-wider text-[#E6BE72] bg-[#090B14]/95 border border-white/10 rounded-full px-2.5 py-1.5 shadow-lg animate-orbit-ccw whitespace-nowrap"
-                              style={{
-                                transform: `rotate(${angle}deg) translate(110px) rotate(-${angle}deg)`
-                              }}
-                            >
-                              {tag}
-                            </div>
-                          );
-                        })}
-                      </div>
+                      {/* Beveled Inner Shield */}
+                      <rect
+                        x="26"
+                        y="48"
+                        width="68"
+                        height="48"
+                        rx="10"
+                        fill="url(#lock-inner)"
+                        stroke="#9C7A3C"
+                        strokeWidth="1.5"
+                      />
 
-                      {/* Glowing Lock Body Container */}
-                      <div className="z-10 bg-[#111827]/85 p-5 rounded-full border border-[#E6BE72]/15 shadow-[0_0_30px_rgba(230,190,114,0.1)]">
-                        <svg viewBox="0 0 100 100" className="w-16 h-16 drop-shadow-[0_0_15px_rgba(230,190,114,0.25)]">
-                          {/* Shackle */}
-                          <motion.path
-                            d="M 35 45 L 35 30 A 15 15 0 0 1 65 30 L 65 45"
-                            fill="none"
-                            stroke="#E6BE72"
-                            strokeWidth="6"
-                            strokeLinecap="round"
-                            animate={{ y: (animationStage === 1 || animationStage === 2) ? -12 : 0 }}
-                            transition={{ type: "spring", stiffness: 180, damping: 12 }}
-                          />
-                          {/* Lock Body */}
-                          <rect x="22" y="42" width="56" height="42" rx="10" fill="url(#vault-body-grad-new)" stroke="#E6BE72" strokeWidth="2.5" />
-                          {/* Keyhole */}
-                          <circle cx="50" cy="58" r="5" fill="#faf6ee" className="animate-pulse" />
-                          <path d="M 50 63 L 50 74" stroke="#faf6ee" strokeWidth="3.5" strokeLinecap="round" />
-                          
-                          <defs>
-                            <linearGradient id="vault-body-grad-new" x1="0%" y1="0%" x2="100%" y2="100%">
-                              <stop offset="0%" stopColor="#111827" />
-                              <stop offset="100%" stopColor="#090B14" />
-                            </linearGradient>
-                          </defs>
-                        </svg>
-                      </div>
-                    </div>
-
-                    {/* Heartbeat EKG Pulse */}
-                    <div className="w-full h-8 border-t border-white/5 pt-2">
-                      <svg viewBox="0 0 200 40" className="w-full h-6">
-                        <path
-                          d="M 0 20 L 40 20 L 50 10 L 55 30 L 60 10 L 65 20 L 110 20 L 120 5 L 125 35 L 130 5 L 135 20 L 200 20"
-                          fill="none"
-                          stroke="#10b981"
-                          strokeWidth="1.5"
-                          strokeLinecap="round"
-                          className="heartbeat-path"
-                        />
-                      </svg>
-                    </div>
+                      {/* Lock Core Details */}
+                      <circle cx="60" cy="70" r="7" fill="url(#gold-metallic)" />
+                      <path
+                        d="M 60 70 L 60 85"
+                        stroke="url(#gold-metallic)"
+                        strokeWidth="4"
+                        strokeLinecap="round"
+                      />
+                      
+                      {/* Central pulsing core glow */}
+                      <circle cx="60" cy="70" r="2.5" fill="#FFF" className="animate-pulse" />
+                    </svg>
                   </motion.div>
                 </div>
               </div>
