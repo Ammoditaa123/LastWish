@@ -43,7 +43,7 @@ import { getVaultContract, DEFAULT_CONTRACT_ADDRESS } from "../utils/contract";
 import { uploadToIPFS, downloadFromIPFS } from "../utils/ipfs";
 import { BrowserProvider, ethers } from "ethers";
 import { motion, AnimatePresence, useMotionValue, useTransform, useSpring } from "framer-motion";
-
+import FluidGlass from "../components/FluidGlass";
 // Define Types for Multi-Recipient Architecture
 interface VaultConfig {
   recipientAddress: string;
@@ -1290,6 +1290,19 @@ export default function LastWishApp() {
             >
               {landingTab === "home" && (
                 <>
+                  {/* Fluid Glass Cursor Refraction Background */}
+                  <div className="absolute -inset-x-4 md:-inset-x-8 -top-8 bottom-0 w-[calc(100%+2rem)] md:w-[calc(100%+4rem)] h-full pointer-events-none z-0 overflow-hidden select-none opacity-85">
+                    <FluidGlass 
+                      mode="lens"
+                      lensProps={{
+                        scale: 1.35,
+                        ior: 1.22,
+                        thickness: 2.8,
+                        chromaticAberration: 0.1,
+                        anisotropy: 0.04
+                      }}
+                    />
+                  </div>
 
                   {/* Hero Two-Column Grid */}
               <div className="w-full flex flex-col md:flex-row items-center justify-between gap-12">
