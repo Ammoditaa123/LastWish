@@ -171,6 +171,7 @@ export default function LastWishApp() {
   const [claimVaultAddress, setClaimVaultAddress] = useState<string>("");
   const [claimCategory, setClaimCategory] = useState<string>("Memories");
   const [recipientShareInput, setRecipientShareInput] = useState<string>("");
+  const [manualPayloadInput, setManualPayloadInput] = useState<string>("");
   const [decryptionResult, setDecryptionResult] = useState<string | null>(null);
   const [decryptedItems, setDecryptedItems] = useState<Array<{ category: string; fileName?: string; fileType?: string; content: string }>>([]);
   const [decryptionError, setDecryptionError] = useState<string | null>(null);
@@ -813,8 +814,16 @@ export default function LastWishApp() {
           const onChainShare1 = await contract.claimVaultShare(cleanAddress, item.category);
           share1ToUse = onChainShare1;
 
-          // 2. Download from IPFS
-          payloadToUse = await downloadFromIPFS(item.ipfsHash);
+          // 2. Download from IPFS or use manual fallback
+          if (manualPayloadInput.trim()) {
+            try {
+              payloadToUse = JSON.parse(manualPayloadInput.trim());
+            } catch (e: any) {
+              throw new Error(`Failed to parse manual payload JSON: ${e.message}`);
+            }
+          } else {
+            payloadToUse = await downloadFromIPFS(item.ipfsHash);
+          }
 
           // Find file metadata from local vault list if available
           const localMatch = targetVault?.configs.find(cfg => cfg.category.toLowerCase() === item.category.toLowerCase());
@@ -827,8 +836,16 @@ export default function LastWishApp() {
           if (item.status !== "UNLOCKED") {
             throw new Error(`Vault category '${item.category}' is locked. Inactivity threshold not met.`);
           }
-          // Load local simulated payload
-          payloadToUse = await downloadFromIPFS(item.ipfsHash);
+          // Load local simulated payload or manual fallback
+          if (manualPayloadInput.trim()) {
+            try {
+              payloadToUse = JSON.parse(manualPayloadInput.trim());
+            } catch (e: any) {
+              throw new Error(`Failed to parse manual payload JSON: ${e.message}`);
+            }
+          } else {
+            payloadToUse = await downloadFromIPFS(item.ipfsHash);
+          }
         }
 
         if (!payloadToUse) {
@@ -870,6 +887,54 @@ export default function LastWishApp() {
     navigator.clipboard.writeText(text);
     setCopiedShare(key);
     setTimeout(() => setCopiedShare(null), 2000);
+  };
+
+  const downloadBackupPackage = () => {
+    const backupData = {
+      vaultId: createdVaultId,
+      name: newVaultName,
+      createdAt: Date.now(),
+      configs: createdVaultConfigs.map(cfg => {
+        const simulatedCid = cfg.ipfsHash.replace("ipfs://", "").trim();
+        const simulatedPayload = localStorage.getItem(`ipfs_sim_${simulatedCid}`);
+        return {
+          ...cfg,
+          rawEncryptedPayload: simulatedPayload ? JSON.parse(simulatedPayload) : null
+        };
+      })
+    };
+
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupData, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute("href", dataStr);
+    downloadAnchor.setAttribute("download", `lastwish-backup-${newVaultName.toLowerCase().replace(/\s+/g, '-') || "capsule"}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+  };
+
+  const downloadBackupForVault = (v: Vault) => {
+    const backupData = {
+      vaultId: v.id,
+      name: v.name,
+      createdAt: v.createdAt,
+      configs: v.configs.map(cfg => {
+        const simulatedCid = cfg.ipfsHash.replace("ipfs://", "").trim();
+        const simulatedPayload = localStorage.getItem(`ipfs_sim_${simulatedCid}`);
+        return {
+          ...cfg,
+          rawEncryptedPayload: simulatedPayload ? JSON.parse(simulatedPayload) : null
+        };
+      })
+    };
+
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupData, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute("href", dataStr);
+    downloadAnchor.setAttribute("download", `lastwish-backup-${v.name.toLowerCase().replace(/\s+/g, '-') || "capsule"}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
   };
 
   const resetWizard = () => {
@@ -1709,6 +1774,13 @@ export default function LastWishApp() {
                                               Veto
                                             </button>
                                             <button
+                                              onClick={() => downloadBackupForVault(v)}
+                                              className="px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-[#2ECC71] border border-[#2ECC71]/25 rounded-xl text-[10px] font-bold font-mono transition-all cursor-pointer"
+                                              title="Export encrypted JSON backup file containing payload and beneficiary shares"
+                                            >
+                                              Export JSON
+                                            </button>
+                                            <button
                                               onClick={() => deleteVault(v.id)}
                                               className="p-2 bg-red-500/5 hover:bg-red-500/15 text-[#FF5A5F] border border-red-500/10 hover:border-red-500/25 rounded-xl cursor-pointer border-0"
                                               title="Delete Vault"
@@ -2290,12 +2362,21 @@ export default function LastWishApp() {
                           </div>
                         </div>
 
-                        <button 
-                          onClick={resetWizard}
-                          className="w-full border border-[#E6BE72]/30 hover:border-[#E6BE72] text-[#E6BE72] hover:text-white font-bold py-3.5 rounded-full text-xs font-mono cursor-pointer uppercase tracking-wider transition-all bg-transparent"
-                        >
-                          Finish & Go to Dashboard
-                        </button>
+                        <div className="flex flex-col sm:flex-row gap-3 w-full">
+                          <button 
+                            onClick={downloadBackupPackage}
+                            className="flex-1 bg-gradient-to-r from-[#E6BE72] to-[#c5a880] text-gray-950 font-bold py-3.5 rounded-full text-xs font-mono cursor-pointer uppercase tracking-wider transition-all flex items-center justify-center space-x-2 border-0"
+                          >
+                            <Download className="w-4 h-4" />
+                            <span>Download Backup JSON</span>
+                          </button>
+                          <button 
+                            onClick={resetWizard}
+                            className="flex-1 border border-[#E6BE72]/30 hover:border-[#E6BE72] text-[#E6BE72] hover:text-white font-bold py-3.5 rounded-full text-xs font-mono cursor-pointer uppercase tracking-wider transition-all bg-transparent"
+                          >
+                            Finish & Go to Dashboard
+                          </button>
+                        </div>
                       </motion.div>
                     )}
                   </motion.div>
@@ -2374,6 +2455,37 @@ export default function LastWishApp() {
                                 }}
                                 className="px-4 py-3.5 bg-gray-950 border border-gray-900 text-gray-400 hover:text-white rounded-xl text-xs flex items-center justify-center space-x-1 transition-all cursor-pointer self-stretch border-0"
                                 title="Paste Share 2 from clipboard"
+                              >
+                                <span>Paste</span>
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block flex justify-between">
+                              <span>Manual Ciphertext (Optional Fallback)</span>
+                              <span className="text-[8px] text-gray-500 font-normal">Use if IPFS fails</span>
+                            </label>
+                            <div className="flex gap-2 items-start">
+                              <textarea 
+                                placeholder='Paste raw encrypted payload JSON: {"ciphertext":"...","iv":"...","salt":"..."}'
+                                value={manualPayloadInput}
+                                onChange={(e) => setManualPayloadInput(e.target.value)}
+                                rows={3}
+                                className="flex-1 design-input px-4 py-3 text-xs resize-none"
+                              />
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  try {
+                                    const text = await navigator.clipboard.readText();
+                                    setManualPayloadInput(text.trim());
+                                  } catch (err) {
+                                    console.error("Failed to read clipboard:", err);
+                                  }
+                                }}
+                                className="px-4 py-4.5 bg-gray-950 border border-gray-900 text-gray-400 hover:text-white rounded-xl text-xs flex items-center justify-center space-x-1 transition-all cursor-pointer self-stretch border-0"
+                                title="Paste JSON payload from clipboard"
                               >
                                 <span>Paste</span>
                               </button>

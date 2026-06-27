@@ -67,11 +67,29 @@ export async function downloadFromIPFS(cid: string): Promise<EncryptedPayload> {
   const cleanCid = cid.replace("ipfs://", "").trim();
 
   // Try multiple gateways for redundancy
-  const gateways = [
+  const gateways: string[] = [];
+
+  // Check if user has configured a custom gateway in Settings
+  if (typeof window !== "undefined") {
+    const customGateway = localStorage.getItem("lastwish_custom_ipfs_gateway") || "";
+    if (customGateway) {
+      const base = customGateway.endsWith("/") ? customGateway : `${customGateway}/`;
+      gateways.push(`${base}${cleanCid}`);
+    }
+  }
+
+  // Fallback public gateways
+  gateways.push(
     `https://ipfs.io/ipfs/${cleanCid}`,
     `https://cloudflare-ipfs.com/ipfs/${cleanCid}`,
-    `https://gateway.pinata.cloud/ipfs/${cleanCid}`
-  ];
+    `https://gateway.pinata.cloud/ipfs/${cleanCid}`,
+    `https://dweb.link/ipfs/${cleanCid}`,
+    `https://w3s.link/ipfs/${cleanCid}`,
+    `https://ipfs.fleek.co/ipfs/${cleanCid}`,
+    `https://crustipfs.xyz/ipfs/${cleanCid}`,
+    `https://gw.crustfiles.app/ipfs/${cleanCid}`,
+    `https://trustless-gateway.link/ipfs/${cleanCid}`
+  );
 
   let lastError = null;
   for (const url of gateways) {
