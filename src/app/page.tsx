@@ -43,7 +43,6 @@ import { getVaultContract, DEFAULT_CONTRACT_ADDRESS } from "../utils/contract";
 import { uploadToIPFS, downloadFromIPFS } from "../utils/ipfs";
 import { BrowserProvider, ethers } from "ethers";
 import { motion, AnimatePresence, useMotionValue, useTransform, useSpring } from "framer-motion";
-import Galaxy from "../components/Galaxy";
 
 // Define Types for Multi-Recipient Architecture
 interface VaultConfig {
@@ -1291,10 +1290,6 @@ export default function LastWishApp() {
             >
               {landingTab === "home" && (
                 <>
-                  {/* WebGL Galaxy Animated Background Backdrop */}
-                  <div className="absolute -inset-x-4 md:-inset-x-8 -top-8 bottom-0 w-[calc(100%+2rem)] md:w-[calc(100%+4rem)] h-full pointer-events-none z-0 overflow-hidden opacity-35 select-none">
-                    <Galaxy />
-                  </div>
 
                   {/* Hero Two-Column Grid */}
               <div className="w-full flex flex-col md:flex-row items-center justify-between gap-12">
