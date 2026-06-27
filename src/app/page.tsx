@@ -99,10 +99,10 @@ interface ScrambledTextProps {
 }
 
 const ScrambledText: React.FC<ScrambledTextProps> = ({
-  radius = 95,
-  duration = 1.0,
-  speed = 0.6,
-  scrambleChars = '.:/\\*#@!&%+=',
+  radius = 100,
+  duration = 1.2,
+  speed = 1.5,
+  scrambleChars = '.:',
   className = '',
   style = {},
   children
