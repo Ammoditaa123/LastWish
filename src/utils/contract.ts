@@ -1,6 +1,7 @@
 import { BrowserProvider, Contract } from "ethers";
+import { ensureBaseSepolia } from "./network";
 
-// Default Hardhat localhost address for first deploy, but can be updated or overridden.
+// LastWishVault contract deployed on Base Sepolia Testnet
 export const DEFAULT_CONTRACT_ADDRESS = "0xF5c3Cf856A8603C7adfb4F5114116FB63Ff99181";
 
 export const LAST_WISH_VAULT_ABI = [
@@ -18,21 +19,29 @@ export const LAST_WISH_VAULT_ABI = [
 ];
 
 /**
- * Returns a read-only Provider or a Signer-enabled Provider.
+ * Returns a BrowserProvider backed by MetaMask.
+ * Verifies the user is on Base Sepolia before returning.
  */
-export async function getEthereumProvider() {
+export async function getWeb3Provider(): Promise<BrowserProvider> {
   if (typeof window === "undefined" || !(window as any).ethereum) {
-    throw new Error("No Ethereum provider found. Please install MetaMask.");
+    throw new Error("MetaMask not found. Please install MetaMask to use LastWish.");
   }
+  await ensureBaseSepolia();
   return new BrowserProvider((window as any).ethereum);
 }
 
+// Legacy alias kept for backward compatibility
+export const getEthereumProvider = getWeb3Provider;
+
 /**
- * Returns the contract instance connected to a signer.
+ * Returns the contract instance connected to a signer on Base Sepolia.
  */
-export async function getVaultContract(contractAddress?: string) {
-  const provider = await getEthereumProvider();
+export async function getVaultContract(contractAddress?: string): Promise<Contract> {
+  const provider = await getWeb3Provider();
   const signer = await provider.getSigner();
-  const address = contractAddress || localStorage.getItem("lastwish_contract_address") || DEFAULT_CONTRACT_ADDRESS;
+  const address =
+    contractAddress ||
+    localStorage.getItem("lastwish_contract_address") ||
+    DEFAULT_CONTRACT_ADDRESS;
   return new Contract(address, LAST_WISH_VAULT_ABI, signer);
 }

@@ -43,6 +43,7 @@ import { encryptAndSplit, reconstructAndDecrypt, EncryptedPayload } from "../uti
 import { getVaultContract, DEFAULT_CONTRACT_ADDRESS } from "../utils/contract";
 import { uploadToIPFS, downloadFromIPFS } from "../utils/ipfs";
 import { BrowserProvider, ethers } from "ethers";
+import { BASE_SEPOLIA, isBaseSepolia, switchToBaseSepolia } from "../utils/network";
 import { motion, AnimatePresence, useMotionValue, useTransform, useSpring } from "framer-motion";
 
 // Define Types for Multi-Recipient Architecture
@@ -561,7 +562,31 @@ const MOCK_VAULTS: Vault[] = [
     }
   }, [isConnected, userAddress, contractAddress]);
 
-  // Connect Wallet
+  // Track whether wallet is on the correct chain
+  const [isCorrectChain, setIsCorrectChain] = React.useState<boolean>(true);
+
+  // Watch for chain changes in MetaMask and enforce Base Sepolia
+  useEffect(() => {
+    const eth = (window as any).ethereum;
+    if (!eth) return;
+
+    const checkChain = async () => {
+      try {
+        const chainId = await eth.request({ method: "eth_chainId" });
+        setIsCorrectChain(isBaseSepolia(chainId));
+      } catch {}
+    };
+
+    const handleChainChange = (chainId: string) => {
+      setIsCorrectChain(isBaseSepolia(chainId));
+    };
+
+    checkChain();
+    eth.on("chainChanged", handleChainChange);
+    return () => eth.removeListener("chainChanged", handleChainChange);
+  }, []);
+
+  // Connect Wallet — always enforces Base Sepolia
   const connectWallet = async (overrideAddress?: string) => {
     if (overrideAddress) {
       setIsConnected(true);
@@ -573,11 +598,19 @@ const MOCK_VAULTS: Vault[] = [
 
     if (typeof window !== "undefined" && (window as any).ethereum) {
       try {
-        const provider = new BrowserProvider((window as any).ethereum);
+        // Step 1: Request account access
         const accounts = await (window as any).ethereum.request({ method: "eth_requestAccounts" });
+
+        // Step 2: Enforce Base Sepolia — prompt switch/add if needed
+        const chainId = await (window as any).ethereum.request({ method: "eth_chainId" });
+        if (!isBaseSepolia(chainId)) {
+          await switchToBaseSepolia();
+        }
+
         const address = accounts[0];
         setIsConnected(true);
         setUserAddress(address);
+        setIsCorrectChain(true);
         setShowLanding(false);
         setIsSandboxMode(false);
         canvasConfetti({
@@ -585,7 +618,7 @@ const MOCK_VAULTS: Vault[] = [
           spread: 60,
           colors: ["#e5c483", "#faf6ee", "#ddb892"]
         });
-        
+
         setTimeout(() => syncVaultsWithBlockchain(), 500);
       } catch (err: any) {
         console.error("Connection failed:", err);
@@ -1437,7 +1470,7 @@ const MOCK_VAULTS: Vault[] = [
         ) : (
           <div className="flex items-center space-x-3 font-mono">
             <span className="text-[10px] text-[#E6BE72] bg-[#E6BE72]/10 px-2 py-0.5 rounded border border-[#E6BE72]/25 font-bold uppercase tracking-wider">
-              {isSandboxMode ? "Simulator" : "Mainnet"}
+              {isSandboxMode ? "Simulator" : isCorrectChain ? "Base Sepolia" : "Wrong Network"}
             </span>
             <span className="text-white text-xs font-bold font-mono">
               {activeTab === "dashboard" ? "Dashboard" : 
@@ -1480,6 +1513,20 @@ const MOCK_VAULTS: Vault[] = [
         <div className="w-full bg-[#E6BE72]/10 border-b border-[#E6BE72]/20 py-2.5 px-4 text-center text-xs text-[#E6BE72] font-mono flex items-center justify-center space-x-2 z-20">
           <AlertTriangle className="w-4 h-4 text-[#E6BE72] animate-pulse" />
           <span>MetaMask not detected. Running in Sandbox Simulation mode.</span>
+        </div>
+      )}
+
+      {/* Wrong Network Banner */}
+      {isConnected && !isSandboxMode && !isCorrectChain && (
+        <div className="w-full bg-red-500/10 border-b border-red-500/25 py-2.5 px-4 text-center text-xs text-red-400 font-mono flex items-center justify-center space-x-3 z-20">
+          <AlertTriangle className="w-4 h-4 text-red-400 animate-pulse flex-shrink-0" />
+          <span>Wrong network detected. LastWish requires <strong>Base Sepolia</strong> (Chain ID: 84532).</span>
+          <button
+            onClick={() => switchToBaseSepolia().then(() => setIsCorrectChain(true)).catch(console.error)}
+            className="ml-2 px-3 py-1 bg-red-500/20 hover:bg-red-500/35 border border-red-500/40 rounded-full text-red-300 font-bold uppercase tracking-wider text-[10px] cursor-pointer transition-all duration-200"
+          >
+            Switch Network
+          </button>
         </div>
       )}
 
@@ -1865,9 +1912,9 @@ const MOCK_VAULTS: Vault[] = [
                         <div>
                           <span className="text-[10px] text-gray-500 font-mono uppercase block font-bold">Network</span>
                           <div className="text-lg font-extrabold font-mono text-white mt-1">
-                            Sepolia
+                            Base Sepolia
                           </div>
-                          <span className="text-[9px] text-gray-500 font-mono block mt-1">Ethereum Testnet</span>
+                          <span className="text-[9px] text-gray-500 font-mono block mt-1">Chain ID: {BASE_SEPOLIA.chainId}</span>
                         </div>
                       </div>
                     </div>
@@ -2881,7 +2928,7 @@ const MOCK_VAULTS: Vault[] = [
                           <span className="w-2 h-2 rounded-full bg-[#2ECC71] animate-pulse" />
                         </div>
                         <p className="text-[10px] text-gray-400 leading-relaxed">
-                          Your active Ethereum account is linked to the smart contract registry.
+                          Your wallet on Base Sepolia is linked to the LastWish smart contract registry.
                         </p>
                       </div>
 
