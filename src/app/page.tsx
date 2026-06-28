@@ -35,7 +35,8 @@ import {
   Database,
   PlusCircle,
   Activity,
-  Settings
+  Settings,
+  Globe
 } from "lucide-react";
 import canvasConfetti from "canvas-confetti";
 import { encryptAndSplit, reconstructAndDecrypt, EncryptedPayload } from "../utils/crypto";
@@ -90,9 +91,162 @@ const heroAssets = [
 
 
 
+interface ScrambledTextProps {
+  radius?: number;
+  duration?: number;
+  speed?: number;
+  scrambleChars?: string;
+  className?: string;
+  style?: React.CSSProperties;
+  children: string;
+}
+
+const ScrambledText: React.FC<ScrambledTextProps> = ({
+  radius = 50,
+  duration = 1.2,
+  speed = 0.5,
+  scrambleChars = '.:',
+  className = '',
+  style = {},
+  children
+}) => {
+  const rootRef = React.useRef<HTMLSpanElement | null>(null);
+
+  useEffect(() => {
+    if (!rootRef.current) return;
+    const parent = rootRef.current;
+    
+    // Split text into individual span characters
+    const text = parent.textContent || '';
+    parent.innerHTML = '';
+    
+    const charSpans = text.split('').map((char: string) => {
+      const span = document.createElement('span');
+      span.className = 'inline-block will-change-transform';
+      span.textContent = char;
+      span.setAttribute('data-content', char);
+      parent.appendChild(span);
+      return span;
+    });
+
+    const activeTimers = new Map<HTMLSpanElement, {
+      timer: any;
+      restoreTimer: any;
+    }>();
+
+    const handleMove = (e: PointerEvent) => {
+      charSpans.forEach((span: HTMLSpanElement) => {
+        const { left, top, width, height } = span.getBoundingClientRect();
+        const centerX = left + width / 2;
+        const centerY = top + height / 2;
+        const dx = e.clientX - centerX;
+        const dy = e.clientY - centerY;
+        const dist = Math.hypot(dx, dy);
+
+        if (dist < radius) {
+          // If already scrambling, ignore or refresh
+          if (activeTimers.has(span)) {
+            return;
+          }
+
+          const originalChar = span.getAttribute('data-content') || '';
+          if (originalChar === ' ') return; // Don't scramble spaces
+
+          const scrambleDuration = duration * (1 - dist / radius) * 1000;
+          
+          // Scramble characters periodically based on speed
+          const intervalId = setInterval(() => {
+            const randIdx = Math.floor(Math.random() * scrambleChars.length);
+            span.textContent = scrambleChars[randIdx];
+          }, 60 / speed); // speed scaling
+
+          // Restore original character after scrambleDuration
+          const restoreTimeoutId = setTimeout(() => {
+            clearInterval(intervalId);
+            span.textContent = originalChar;
+            activeTimers.delete(span);
+          }, scrambleDuration);
+
+          activeTimers.set(span, {
+            timer: intervalId,
+            restoreTimer: restoreTimeoutId
+          });
+        }
+      });
+    };
+
+    window.addEventListener('pointermove', handleMove);
+
+    return () => {
+      window.removeEventListener('pointermove', handleMove);
+      activeTimers.forEach((timers) => {
+        clearInterval(timers.timer);
+        clearTimeout(timers.restoreTimer);
+      });
+    };
+  }, [radius, duration, speed, scrambleChars]);
+
+  return (
+    <span
+      ref={rootRef}
+      className={className}
+      style={style}
+    >
+      {children}
+    </span>
+  );
+};
+
+const WizardStepper = ({ currentStep }: { currentStep: number }) => {
+  const steps = [
+    { num: 1, label: "Basic Info" },
+    { num: 2, label: "Add Assets" },
+    { num: 3, label: "Set Recipients" },
+    { num: 4, label: "Review & Confirm" }
+  ];
+
+  return (
+    <div className="w-full pb-8">
+      <div className="flex items-center justify-between relative max-w-xl mx-auto font-mono text-[9px] select-none">
+        {/* Connecting line */}
+        <div className="absolute left-8 right-8 top-4 h-[1.5px] bg-white/5 -z-10">
+          <div 
+            className="h-full bg-[#E6BE72] transition-all duration-500" 
+            style={{ width: `${((currentStep - 1) / 3) * 100}%` }}
+          />
+        </div>
+        
+        {steps.map((s) => {
+          const isCompleted = currentStep > s.num;
+          const isActive = currentStep === s.num;
+          
+          return (
+            <div key={s.num} className="flex flex-col items-center space-y-2">
+              <div 
+                className={`w-8 h-8 rounded-full flex items-center justify-center font-bold border transition-all duration-300 ${
+                  isCompleted 
+                    ? "bg-[#E6BE72] border-[#E6BE72] text-gray-950 shadow-[0_0_15px_rgba(230,190,114,0.3)]" 
+                    : isActive 
+                      ? "bg-transparent border-[#E6BE72] text-[#E6BE72] shadow-[0_0_15px_rgba(230,190,114,0.2)]" 
+                      : "bg-[#090B14] border-white/10 text-gray-500"
+                }`}
+              >
+                {isCompleted ? "✓" : s.num}
+              </div>
+              <span className={`font-bold uppercase tracking-wider ${isActive ? "text-[#E6BE72]" : isCompleted ? "text-gray-300" : "text-gray-500"}`}>
+                {s.label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 export default function LastWishApp() {
   const [showLanding, setShowLanding] = useState<boolean>(true);
-  const [activeTab, setActiveTab] = useState<"owner" | "recipient" | "inspector" | "playground">("owner");
+  const [activeTab, setActiveTab] = useState<string>("dashboard");
   const [landingTab, setLandingTab] = useState<"home" | "how-it-works" | "security" | "about">("home");
   const [inspectSubTab, setInspectSubTab] = useState<"overview" | "recipients" | "files" | "transactions" | "contract">("overview");
   
@@ -228,15 +382,82 @@ export default function LastWishApp() {
   const [pgDecryptedError, setPgDecryptedError] = useState<string>("");
   const [pgPayload, setPgPayload] = useState<EncryptedPayload | null>(null);
 
+const MOCK_VAULTS: Vault[] = [
+  {
+    id: "0x1111111111111111111111111111111111111111111111111111111111111111",
+    name: "Family Heritage Vault",
+    ownerAddress: "0x1234567890123456789012345678901234567890",
+    createdAt: Date.now() - 30 * 24 * 60 * 60 * 1000,
+    lastHeartbeat: Date.now() - 2 * 24 * 60 * 60 * 1000,
+    configs: [
+      {
+        category: "Memories",
+        recipientAddress: "0x9876543210abcdef9876543210abcdef98765432",
+        inactivityPeriod: 7 * 24 * 60 * 60,
+        gracePeriod: 2 * 24 * 60 * 60,
+        status: "ACTIVE",
+        share1: "0x1234",
+        share2: "0x5678",
+        share3: "0x9abc",
+        ipfsHash: "QmE3vK5YMtoMJvPRu5eFG13uGz1WyGRaMFgRnViwH8YxcY"
+      }
+    ]
+  },
+  {
+    id: "0x2222222222222222222222222222222222222222222222222222222222222222",
+    name: "Personal Memoirs & Credentials",
+    ownerAddress: "0x1234567890123456789012345678901234567890",
+    createdAt: Date.now() - 15 * 24 * 60 * 60 * 1000,
+    lastHeartbeat: Date.now() - 1 * 24 * 60 * 60 * 1000,
+    configs: [
+      {
+        category: "Finances",
+        recipientAddress: "0xabcdef9876543210abcdef9876543210abcdef98",
+        inactivityPeriod: 30 * 24 * 60 * 60,
+        gracePeriod: 5 * 24 * 60 * 60,
+        status: "ACTIVE",
+        share1: "0xabcd",
+        share2: "0xef01",
+        share3: "0x2345",
+        ipfsHash: "QmE3vK5YMtoMJvPRu5eFG13uGz1WyGRaMFgRnViwH8YxcY"
+      }
+    ]
+  },
+  {
+    id: "0x3333333333333333333333333333333333333333333333333333333333333333",
+    name: "Web3 Safe & Secret Keys",
+    ownerAddress: "0x1234567890123456789012345678901234567890",
+    createdAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
+    lastHeartbeat: Date.now() - 12 * 24 * 60 * 60 * 1000,
+    configs: [
+      {
+        category: "Medical",
+        recipientAddress: "0x543210abcdef9876543210abcdef9876543210ab",
+        inactivityPeriod: 10 * 24 * 60 * 60,
+        gracePeriod: 1 * 24 * 60 * 60,
+        status: "ACTIVE",
+        share1: "0x9999",
+        share2: "0x8888",
+        share3: "0x7777",
+        ipfsHash: "QmE3vK5YMtoMJvPRu5eFG13uGz1WyGRaMFgRnViwH8YxcY"
+      }
+    ]
+  }
+];
+
   // Load vaults from localStorage
   useEffect(() => {
     const savedVaults = localStorage.getItem("lastwish_vaults_v2");
     if (savedVaults) {
       try {
-        setVaults(JSON.parse(savedVaults));
+        const parsed = JSON.parse(savedVaults);
+        setVaults(parsed.length > 0 ? parsed : MOCK_VAULTS);
       } catch (e) {
-        setVaults([]);
+        setVaults(MOCK_VAULTS);
       }
+    } else {
+      setVaults(MOCK_VAULTS);
+      localStorage.setItem("lastwish_vaults_v2", JSON.stringify(MOCK_VAULTS));
     }
 
     const savedAddress = localStorage.getItem("lastwish_contract_address");
@@ -1065,6 +1286,7 @@ export default function LastWishApp() {
     setCreatedVaultConfigs([]);
     setCreatedVaultId("");
     setIsWizardActive(false);
+    setActiveTab("dashboard");
   };
 
   // Playground Sandbox functions
@@ -1139,20 +1361,16 @@ export default function LastWishApp() {
             {/* Navigation */}
             <nav className="space-y-1.5">
               {[
-                { id: "owner", label: "Owner Dashboard", icon: LayoutDashboard, action: () => { setActiveTab("owner"); setIsWizardActive(false); } },
-                { id: "my-vaults", label: "My Vaults", icon: Database, action: () => { setActiveTab("owner"); setIsWizardActive(false); setTimeout(() => { document.getElementById("vaults-container")?.scrollIntoView({ behavior: "smooth" }); }, 100); } },
-                { id: "create-vault", label: "Create Legacy Vault", icon: PlusCircle, action: () => { setActiveTab("owner"); setIsWizardActive(true); setStep(1); } },
+                { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, action: () => { setActiveTab("dashboard"); setIsWizardActive(false); } },
+                { id: "my-vaults", label: "My Vaults", icon: Database, action: () => { setActiveTab("my-vaults"); setIsWizardActive(false); } },
+                { id: "create-vault", label: "Create Vault", icon: PlusCircle, action: () => { setActiveTab("create-vault"); setIsWizardActive(true); setStep(1); } },
+                { id: "heartbeat", label: "Heartbeat", icon: Activity, action: () => { setActiveTab("heartbeat"); setIsWizardActive(false); } },
+                { id: "resources", label: "Resources", icon: Globe, action: () => { setActiveTab("resources"); setIsWizardActive(false); } },
                 { id: "recipient", label: "Claim Portal", icon: Unlock, action: () => { setActiveTab("recipient"); setIsWizardActive(false); } },
                 { id: "inspector", label: "Vault Inspector", icon: Search, action: () => { setActiveTab("inspector"); setIsWizardActive(false); } },
                 { id: "playground", label: "ZK/SSS Playground", icon: Box, action: () => { setActiveTab("playground"); setIsWizardActive(false); } },
               ].map((item) => {
-                const isActive = 
-                  (item.id === "owner" && activeTab === "owner" && !isWizardActive) ||
-                  (item.id === "my-vaults" && activeTab === "owner" && !isWizardActive) ||
-                  (item.id === "create-vault" && isWizardActive) ||
-                  (item.id === "recipient" && activeTab === "recipient") ||
-                  (item.id === "inspector" && activeTab === "inspector") ||
-                  (item.id === "playground" && activeTab === "playground");
+                const isActive = activeTab === item.id;
 
                 return (
                   <button
@@ -1236,7 +1454,11 @@ export default function LastWishApp() {
               {isSandboxMode ? "Simulator" : "Mainnet"}
             </span>
             <span className="text-white text-xs font-bold font-mono">
-              {activeTab === "owner" ? (isWizardActive ? "Capsule Wizard" : "Owner Dashboard") : 
+              {activeTab === "dashboard" ? "Dashboard" : 
+               activeTab === "my-vaults" ? "My Vaults" : 
+               activeTab === "create-vault" ? "Capsule Wizard" : 
+               activeTab === "heartbeat" ? "Heartbeat Status" : 
+               activeTab === "resources" ? "Resources & Support" : 
                activeTab === "recipient" ? "Claim Portal" : 
                activeTab === "inspector" ? "Vault Inspector" : "ZK/SSS Playground"}
             </span>
@@ -1290,338 +1512,72 @@ export default function LastWishApp() {
             >
               {landingTab === "home" && (
                 <>
-
-
-                  {/* Hero Two-Column Grid */}
-              <div className="w-full flex flex-col md:flex-row items-center justify-between gap-12">
-                {/* Left Column: Premium Headline & Description & Interactive CTAs */}
-                <div className="flex-1 max-w-xl space-y-8 z-10">
-                  <div className="space-y-4">
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-[#E6BE72]/10 border border-[#E6BE72]/20 text-[#E6BE72] animate-pulse">
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#E6BE72]" />
-                      Protocol v2.1 Active
-                    </span>
-                    
-                    <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight leading-[1.05] text-[#faf6ee] font-sans">
-                      Your Digital Legacy.<br />
-                      <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#E6BE72] via-[#E6BE72]/85 to-[#faf6ee]">
-                        Secured Beyond Time.
-                      </span>
-                    </h1>
-                    
-                    <p className="text-gray-400 text-sm md:text-base leading-relaxed">
-                      Store memories, important documents, and digital assets securely. LastWish ensures your legacy reaches the right people at the right moment.
-                    </p>
-                  </div>
-
-                  <div className="flex flex-col sm:flex-row items-center gap-4 pt-2">
-                    {/* Primary CTA */}
-                    <div className="relative w-full sm:w-auto">
-                      {/* Floating encryption particles for CTA hover */}
-                      {ctaHovered && (
-                        <div className="absolute -inset-10 pointer-events-none overflow-hidden z-20">
-                          <div className="absolute top-1/2 left-0 w-2 h-2 bg-[#E6BE72]/60 rounded-full animate-ping" style={{ animationDelay: '0.2s' }} />
-                          <div className="absolute bottom-2 right-4 w-1.5 h-1.5 bg-[#E6BE72]/40 rounded-full animate-pulse" />
-                          <div className="absolute top-2 right-8 w-2 h-2 bg-[#E6BE72]/55 rounded-full animate-[ping_1.5s_infinite]" />
-                        </div>
-                      )}
-                      
-                      <button
-                        onClick={() => setShowLanding(false)}
-                        onMouseEnter={() => setCtaHovered(true)}
-                        onMouseLeave={() => setCtaHovered(false)}
-                        className="cta-primary-glow w-full sm:w-auto bg-gradient-to-r from-[#E6BE72] to-[#c5a880] text-[#090B14] px-8 py-4 rounded-full text-xs font-bold uppercase tracking-wider transition-all duration-300 hover:scale-105 hover:shadow-[0_0_25px_rgba(230,190,114,0.4)] flex items-center justify-center gap-2 group cursor-pointer border-0"
-                      >
-                        <span className="relative z-10 font-bold">Create Legacy Vault</span>
-                        <motion.span
-                          className="relative z-10 font-bold"
-                          animate={{ x: ctaHovered ? 4 : 0 }}
-                          transition={{ duration: 0.2 }}
-                        >
-                          →
-                        </motion.span>
-                      </button>
-                    </div>
-
-                    {/* Secondary CTA */}
-                    <button
-                      onClick={() => setShowSecurityModal(true)}
-                      className="outlined-action w-full sm:w-auto px-8 py-4 rounded-full text-xs font-bold uppercase tracking-wider transition-all duration-300 flex items-center justify-center cursor-pointer"
-                    >
-                      Explore Security
-                    </button>
-                  </div>
-                </div>
-
-                {/* Right Column: Premium Holographic 3D Orbiting Lock Animation */}
-                <div 
-                  onMouseMove={handleCardMouseMove}
-                  onMouseEnter={() => setIsCardHovered(true)}
-                  onMouseLeave={handleCardMouseLeave}
-                  className="flex-1 flex items-center justify-center relative w-full min-h-[500px] select-none cursor-default py-8"
-                >
-                  {/* Glowing central radial background behind lock */}
-                  <div 
-                    className="absolute w-80 h-80 rounded-full bg-gradient-to-r from-[#E6BE72]/10 via-transparent to-[#7C5CFF]/10 blur-3xl pointer-events-none transition-all duration-700"
-                    style={{
-                      transform: isCardHovered ? 'scale(1.2)' : 'scale(1)',
-                      opacity: isCardHovered ? 0.95 : 0.6
-                    }}
-                  />
-
-                  {/* Blurred gold & purple slow-moving ambient light blobs */}
-                  <motion.div
-                    style={{
-                      x: bgParallaxX,
-                      y: bgParallaxY,
-                    }}
-                    className="absolute inset-0 pointer-events-none overflow-hidden"
-                  >
-                    <div 
-                      className="absolute top-12 left-12 w-64 h-64 rounded-full bg-[#7C5CFF]/5 blur-[100px] mix-blend-screen animate-pulse" 
-                      style={{ animationDuration: '10s' }}
-                    />
-                    <div 
-                      className="absolute bottom-12 right-12 w-72 h-72 rounded-full bg-[#E6BE72]/4 blur-[110px] mix-blend-screen animate-pulse"
-                      style={{ animationDuration: '14s', animationDelay: '1.5s' }}
-                    />
-                  </motion.div>
-
-                  {/* Slow drifting micro stardust particles */}
-                  <div className="absolute inset-0 pointer-events-none overflow-hidden">
-                    {Array.from({ length: 8 }).map((_, i) => {
-                      const size = Math.random() * 2 + 0.8;
-                      const delay = Math.random() * 6;
-                      const duration = 15 + Math.random() * 10;
-                      const left = 15 + Math.random() * 70;
-                      const top = 15 + Math.random() * 70;
-                      return (
-                        <div
-                          key={i}
-                          className="absolute rounded-full bg-[#E6BE72]/20 blur-[0.2px] animate-float-slow"
-                          style={{
-                            width: size,
-                            height: size,
-                            left: `${left}%`,
-                            top: `${top}%`,
-                            animationDelay: `${delay}s`,
-                            animationDuration: `${duration}s`
-                          }}
-                        />
-                      );
-                    })}
-                  </div>
-
-                  {/* Connection Network & Orbiting Assets */}
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    {heroAssets.map((asset, idx) => {
-                      const baseAngle = (idx * 360) / heroAssets.length;
-                      const orbitDuration = 24 + idx * 2.5; // slow independent speeds (24s to 36.5s per rev)
-                      const radius = isCardHovered ? 168 : 160;
-
-                      return (
-                        <div
-                          key={asset.id}
-                          className="absolute inset-0 flex items-center justify-center pointer-events-none"
-                        >
-                          {/* 1. Orbit Rotation Container */}
-                          <div
-                            className="absolute w-full h-full flex items-center justify-center"
-                            style={{
-                              animation: `spin-clockwise ${orbitDuration}s linear infinite`,
-                              transform: `rotate(${baseAngle}deg)`
-                            }}
+                  {/* Hero Centered Section */}
+                  <div className="w-full flex flex-col items-center justify-center text-center py-16 max-w-4xl mx-auto">
+                    <div className="space-y-8 z-10 flex flex-col items-center justify-center text-center">
+                      <div className="space-y-4 flex flex-col items-center justify-center">
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-[#E6BE72]/10 border border-[#E6BE72]/20 text-[#E6BE72] animate-pulse">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#E6BE72]" />
+                          Protocol v2.1 Active
+                        </span>
+                        
+                        <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight leading-[1.05] text-[#faf6ee] font-sans">
+                          Your Digital Legacy.<br />
+                          <ScrambledText
+                            className="text-transparent bg-clip-text bg-gradient-to-r from-[#E6BE72] via-[#E6BE72]/85 to-[#faf6ee]"
+                            radius={50}
+                            duration={1.2}
+                            speed={0.5}
+                            scrambleChars=".:"
                           >
-                            {/* Connection network thin line (stretches and brightens on hover) */}
-                            <svg className="absolute overflow-visible pointer-events-none" style={{ width: 1, height: radius, transform: 'rotate(0deg)' }}>
-                              <defs>
-                                <linearGradient id={`line-glow-${idx}`} x1="0%" y1="100%" x2="0%" y2="0%">
-                                  <stop offset="0%" stopColor="#E6BE72" stopOpacity="0" />
-                                  <stop offset="35%" stopColor="#E6BE72" stopOpacity="0.04" />
-                                  <stop offset="100%" stopColor="#E6BE72" stopOpacity="0.25" />
-                                </linearGradient>
-                              </defs>
-                              <line 
-                                x1="0" 
-                                y1={radius} 
-                                x2="0" 
-                                y2="0" 
-                                stroke={`url(#line-glow-${idx})`} 
-                                strokeWidth="0.75" 
-                                strokeDasharray="3 3"
-                                className="transition-all duration-700"
-                                style={{
-                                  opacity: isCardHovered ? 0.95 : 0.65
-                                }}
-                              />
-                            </svg>
+                            Secured Beyond Time.
+                          </ScrambledText>
+                        </h1>
+                        
+                        <p className="text-gray-400 text-sm md:text-base leading-relaxed max-w-xl mx-auto">
+                          Store memories, important documents, and digital assets securely. LastWish ensures your legacy reaches the right people at the right moment.
+                        </p>
+                      </div>
 
-                            {/* 2. Position wrapper at current radius */}
-                            <div
-                              style={{
-                                transform: `translateY(-${radius}px) rotate(-${baseAngle}deg)`,
-                              }}
-                              className="pointer-events-auto transition-transform duration-700"
-                            >
-                              {/* 3. Reverse rotation wrapper to keep cards upright */}
-                              <div
-                                style={{
-                                  animation: `spin-counter-clockwise ${orbitDuration}s linear infinite`,
-                                }}
-                              >
-                                {/* 4. Interactive Glassmorphism Card with Parallax cursor translation */}
-                                <motion.div
-                                  style={{
-                                    x: assetsParallaxX,
-                                    y: assetsParallaxY,
-                                    background: "rgba(20, 24, 38, 0.55)",
-                                    backdropFilter: "blur(20px)",
-                                    border: "1px solid rgba(255, 255, 255, 0.08)",
-                                    boxShadow: "0 10px 35px rgba(0, 0, 0, 0.35)",
-                                    borderRadius: "18px"
-                                  }}
-                                  whileHover={{
-                                    scale: 1.08,
-                                    borderColor: "rgba(230, 190, 114, 0.25)",
-                                    boxShadow: "0 15px 40px rgba(230, 190, 114, 0.15)"
-                                  }}
-                                  className="w-14 h-14 flex flex-col items-center justify-center cursor-pointer transition-all duration-300 relative group"
-                                  title={asset.label}
-                                >
-                                  {/* Soft inner glow */}
-                                  <div className="absolute inset-0 rounded-[18px] bg-gradient-to-br from-white/5 to-transparent pointer-events-none" />
-                                  
-                                  {/* Icon container */}
-                                  <div className="text-gray-300 group-hover:text-[#E6BE72] transition-colors duration-300 flex items-center justify-center">
-                                    <asset.icon className="w-5 h-5" />
-                                  </div>
-                                </motion.div>
-                              </div>
+                      <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-2 w-full">
+                        {/* Primary CTA */}
+                        <div className="relative w-full sm:w-auto">
+                          {/* Floating encryption particles for CTA hover */}
+                          {ctaHovered && (
+                            <div className="absolute -inset-10 pointer-events-none overflow-hidden z-20">
+                              <div className="absolute top-1/2 left-0 w-2 h-2 bg-[#E6BE72]/60 rounded-full animate-ping" style={{ animationDelay: '0.2s' }} />
+                              <div className="absolute bottom-2 right-4 w-1.5 h-1.5 bg-[#E6BE72]/40 rounded-full animate-pulse" />
+                              <div className="absolute top-2 right-8 w-2 h-2 bg-[#E6BE72]/55 rounded-full animate-[ping_1.5s_infinite]" />
                             </div>
-                          </div>
+                          )}
+                          
+                          <button
+                            onClick={() => setShowLanding(false)}
+                            onMouseEnter={() => setCtaHovered(true)}
+                            onMouseLeave={() => setCtaHovered(false)}
+                            className="cta-primary-glow w-full sm:w-auto bg-gradient-to-r from-[#E6BE72] to-[#c5a880] text-[#090B14] px-8 py-4 rounded-full text-xs font-bold uppercase tracking-wider transition-all duration-300 hover:scale-105 hover:shadow-[0_0_25px_rgba(230,190,114,0.4)] flex items-center justify-center gap-2 group cursor-pointer border-0"
+                          >
+                            <span className="relative z-10 font-bold">Create Legacy Vault</span>
+                            <motion.span
+                              className="relative z-10 font-bold"
+                              animate={{ x: ctaHovered ? 4 : 0 }}
+                              transition={{ duration: 0.2 }}
+                            >
+                              &rarr;
+                            </motion.span>
+                          </button>
                         </div>
-                      );
-                    })}
+
+                        {/* Secondary CTA */}
+                        <button
+                          onClick={() => setShowSecurityModal(true)}
+                          className="outlined-action w-full sm:w-auto px-8 py-4 rounded-full text-xs font-bold uppercase tracking-wider transition-all duration-300 flex items-center justify-center cursor-pointer"
+                        >
+                          Explore Security
+                        </button>
+                      </div>
+                    </div>
                   </div>
-
-                  {/* Central Lock Element with Pulse, float bobbing, and custom golden styling */}
-                  <motion.div
-                    style={{
-                      x: lockParallaxX,
-                      y: lockParallaxY,
-                      transformStyle: "preserve-3d",
-                      perspective: 1000,
-                      z: 50
-                    }}
-                    animate={{
-                      y: [0, -4, 0],
-                      rotate: [0, 1.5, 0, -1.5, 0],
-                    }}
-                    transition={{
-                      y: {
-                        repeat: Infinity,
-                        duration: 5.5,
-                        ease: "easeInOut"
-                      },
-                      rotate: {
-                        repeat: Infinity,
-                        duration: 11,
-                        ease: "easeInOut"
-                      }
-                    }}
-                    className="relative z-30 flex items-center justify-center p-8 rounded-full cursor-pointer"
-                  >
-                    {/* Glowing lock ring backing */}
-                    <div 
-                      className="absolute -inset-8 rounded-full bg-gradient-to-r from-[#E6BE72]/15 to-[#7C5CFF]/15 blur-2xl pointer-events-none transition-all duration-700"
-                      style={{
-                        transform: isCardHovered ? 'scale(1.2)' : 'scale(1)',
-                        opacity: isCardHovered ? 0.9 : 0.65
-                      }}
-                    />
-
-                    {/* Highly polished golden reflection lock body SVG */}
-                    <svg viewBox="0 0 120 120" className="w-24 h-24 drop-shadow-[0_0_35px_rgba(230,190,114,0.4)] transition-transform duration-500 hover:scale-105">
-                      <defs>
-                        {/* Gold Metallic Gradients */}
-                        <linearGradient id="gold-metallic" x1="0%" y1="0%" x2="100%" y2="100%">
-                          <stop offset="0%" stopColor="#FFF1D0" />
-                          <stop offset="30%" stopColor="#E6BE72" />
-                          <stop offset="70%" stopColor="#9C7A3C" />
-                          <stop offset="100%" stopColor="#F5D797" />
-                        </linearGradient>
-                        <linearGradient id="gold-shackle" x1="100%" y1="0%" x2="0%" y2="100%">
-                          <stop offset="0%" stopColor="#E6BE72" />
-                          <stop offset="50%" stopColor="#FFF5DF" />
-                          <stop offset="100%" stopColor="#B39252" />
-                        </linearGradient>
-                        {/* Dark Inner Shield */}
-                        <linearGradient id="lock-inner" x1="0%" y1="0%" x2="100%" y2="100%">
-                          <stop offset="0%" stopColor="#1E2030" />
-                          <stop offset="100%" stopColor="#0B0C15" />
-                        </linearGradient>
-                        {/* Gold Bevel highlight */}
-                        <linearGradient id="gold-stroke" x1="0%" y1="0%" x2="100%" y2="0%">
-                          <stop offset="0%" stopColor="#FFF" stopOpacity="0.8" />
-                          <stop offset="50%" stopColor="#E6BE72" stopOpacity="0.2" />
-                          <stop offset="100%" stopColor="#9C7A3C" stopOpacity="0.9" />
-                        </linearGradient>
-                      </defs>
-
-                      {/* Shackle */}
-                      <path
-                        d="M 36 45 L 36 28 C 36 15, 84 15, 84 28 L 84 45"
-                        fill="none"
-                        stroke="url(#gold-shackle)"
-                        strokeWidth="8"
-                        strokeLinecap="round"
-                      />
-
-                      {/* Main Lock Body */}
-                      <rect
-                        x="18"
-                        y="40"
-                        width="84"
-                        height="64"
-                        rx="16"
-                        fill="url(#gold-stroke)"
-                      />
-                      <rect
-                        x="20"
-                        y="42"
-                        width="80"
-                        height="60"
-                        rx="14"
-                        fill="url(#gold-metallic)"
-                      />
-                      
-                      {/* Beveled Inner Shield */}
-                      <rect
-                        x="26"
-                        y="48"
-                        width="68"
-                        height="48"
-                        rx="10"
-                        fill="url(#lock-inner)"
-                        stroke="#9C7A3C"
-                        strokeWidth="1.5"
-                      />
-
-                      {/* Lock Core Details */}
-                      <circle cx="60" cy="70" r="7" fill="url(#gold-metallic)" />
-                      <path
-                        d="M 60 70 L 60 85"
-                        stroke="url(#gold-metallic)"
-                        strokeWidth="4"
-                        strokeLinecap="round"
-                      />
-                      
-                      {/* Central pulsing core glow */}
-                      <circle cx="60" cy="70" r="2.5" fill="#FFF" className="animate-pulse" />
-                    </svg>
-                  </motion.div>
-                </div>
-              </div>
 
               {/* Bottom Feature Cards */}
               <div className="w-full grid grid-cols-2 md:grid-cols-5 gap-4 pt-12 border-t border-white/5">
@@ -1827,301 +1783,287 @@ export default function LastWishApp() {
               <AnimatePresence mode="wait">
                 
                 {/* Tab 1: Owner Dashboard */}
-                {activeTab === "owner" && (
+                {activeTab === "dashboard" && (
                   <motion.div
-                    key="owner-tab-view"
+                    key="dashboard-tab-view"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ duration: 0.3 }}
+                    className="space-y-6 text-left"
+                  >
+                    {/* Welcome back Keeper header */}
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-2">
+                      <div>
+                        <h2 className="text-3xl font-extrabold text-[#faf6ee] tracking-tight leading-tight">Welcome back, Ashly 👋</h2>
+                        <p className="text-xs text-gray-400 font-mono mt-1">Your legacy is secured and protected.</p>
+                      </div>
+                      <div className="flex items-center space-x-2 bg-[#111827]/60 border border-white/5 px-4 py-2 rounded-full font-mono text-[10px] text-[#2ECC71]">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#2ECC71] animate-pulse" />
+                        <span className="text-[#faf6ee]">Base Sepolia Network</span>
+                      </div>
+                    </div>
+
+                    {/* Stats Grid Row (Full-width, 4 cards) */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 w-full">
+                      {/* Card 1: Total Vaults */}
+                      <div className="glass-panel p-5 rounded-2xl border border-white/5 space-y-3 cursor-default glow-purple relative overflow-hidden group">
+                        <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
+                          <Database className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-gray-500 font-mono uppercase block font-bold">Total Vaults</span>
+                          <div className="text-3xl font-extrabold font-mono text-[#faf6ee] mt-1">
+                            {vaults.length}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Card 2: Heartbeat Status */}
+                      <div className="glass-panel p-5 rounded-2xl border border-white/5 space-y-3 cursor-default glow-green relative overflow-hidden group">
+                        <div className="w-8 h-8 rounded-lg bg-[#2ECC71]/10 border border-[#2ECC71]/20 flex items-center justify-center text-[#2ECC71]">
+                          <Activity className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-gray-500 font-mono uppercase block font-bold">Heartbeat Status</span>
+                          <div className="text-xl font-extrabold font-mono text-[#2ECC71] mt-1 flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-[#2ECC71] animate-pulse" />
+                            Active
+                          </div>
+                          <span className="text-[9px] text-gray-500 font-mono block mt-1">
+                            Last sent: {vaults.length > 0 ? Math.floor((Date.now() - Math.max(...vaults.map(v => v.lastHeartbeat))) / (1000 * 60 * 60 * 24)) : 0} days ago
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Card 3: Next Check-in */}
+                      <div className="glass-panel p-5 rounded-2xl border border-white/5 space-y-3 cursor-default glow-gold relative overflow-hidden group">
+                        <div className="w-8 h-8 rounded-lg bg-[#E6BE72]/10 border border-[#E6BE72]/20 flex items-center justify-center text-[#E6BE72]">
+                          <Lock className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-gray-500 font-mono uppercase block font-bold">Next Check-in</span>
+                          <div className="text-2xl font-extrabold font-mono text-[#faf6ee] mt-1">
+                            {vaults.length > 0 ? Math.max(0, 7 - Math.floor((Date.now() - Math.max(...vaults.map(v => v.lastHeartbeat))) / (1000 * 60 * 60 * 24))) : 7} days
+                          </div>
+                          <span className="text-[9px] text-gray-500 font-mono block mt-1">Remaining</span>
+                        </div>
+                      </div>
+
+                      {/* Card 4: Network */}
+                      <div className="glass-panel p-5 rounded-2xl border border-white/5 space-y-3 cursor-default glow-blue relative overflow-hidden group">
+                        <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
+                          <Globe className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-gray-500 font-mono uppercase block font-bold">Network</span>
+                          <div className="text-lg font-extrabold font-mono text-white mt-1">
+                            Sepolia
+                          </div>
+                          <span className="text-[9px] text-gray-500 font-mono block mt-1">Ethereum Testnet</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Your Vaults Header */}
+                    <div className="flex justify-between items-center pt-4">
+                      <h3 className="text-lg font-bold text-white">Your Vaults</h3>
+                      <button onClick={() => setActiveTab("my-vaults")} className="text-xs text-[#E6BE72] hover:underline font-mono font-bold">
+                        View All &rarr;
+                      </button>
+                    </div>
+
+                    {/* Vaults Grid Section (3 items) */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      {vaults.slice(0, 3).map((v, vIdx) => {
+                        const coverImage = vIdx % 3 === 0 ? "/family_vault.png" : vIdx % 3 === 1 ? "/personal_vault.png" : "/memories_vault.png";
+                        const lastSentDays = Math.floor((Date.now() - v.lastHeartbeat) / (1000 * 60 * 60 * 24));
+                        const isOverdue = lastSentDays >= 10;
+                        const recipientsCount = v.configs.length;
+                        const assetsCount = v.configs.flatMap(c => c.category).length;
+
+                        return (
+                          <div key={v.id} className="glass-panel overflow-hidden rounded-[2rem] border border-white/5 hover:border-[#E6BE72]/30 transition-all duration-300 flex flex-col group text-left">
+                            {/* Card Cover Image */}
+                            <div className="h-44 w-full overflow-hidden relative">
+                              <img src={coverImage} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />
+                              {/* Status Badge */}
+                              <div className="absolute top-4 left-4">
+                                {isOverdue ? (
+                                  <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-bold uppercase tracking-wider bg-red-500/10 border border-red-500/20 text-red-500">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                                    Heartbeat Overdue
+                                  </span>
+                                ) : (
+                                  <span className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-bold uppercase tracking-wider bg-[#2ECC71]/10 border border-[#2ECC71]/20 text-[#2ECC71]">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-[#2ECC71] animate-pulse" />
+                                    Active
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            {/* Card Body */}
+                            <div className="p-6 space-y-4 flex-1 flex flex-col justify-between">
+                              <div className="space-y-1">
+                                <h4 className="text-base font-bold text-white">{v.name}</h4>
+                                <div className="flex items-center text-[10px] text-gray-500 font-mono space-x-2">
+                                  <span>{recipientsCount} Recipients</span>
+                                  <span>•</span>
+                                  <span>{assetsCount} Assets</span>
+                                </div>
+                                <p className="text-[10px] text-gray-400 font-mono pt-1">
+                                  Last heartbeat: {lastSentDays === 0 ? "Today" : lastSentDays === 1 ? "1 day ago" : `${lastSentDays} days ago`}
+                                </p>
+                              </div>
+                              <button
+                                onClick={() => { setInspectVaultId(v.id); queryOnChainVault({ preventDefault: () => {} } as any); setActiveTab("inspector"); }}
+                                className="w-full py-2.5 bg-white/5 hover:bg-white/10 text-white font-bold rounded-xl text-xs font-mono border border-white/5 transition-all text-center cursor-pointer"
+                              >
+                                Manage Vault
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Bottom Heartbeat Send Banner */}
+                    <div className="w-full glass-panel p-8 rounded-[2rem] border border-white/5 flex flex-col md:flex-row items-center justify-between gap-6 overflow-hidden relative group">
+                      {/* Subtle EKG heartbeat wave graphics in background */}
+                      <div className="absolute right-0 top-1/2 -translate-y-1/2 opacity-15 pointer-events-none w-1/3">
+                        <svg viewBox="0 0 200 60" className="w-full h-16 stroke-[#E6BE72] stroke-[1.5] fill-none">
+                          <path d="M 0 30 L 40 30 L 48 10 L 56 50 L 64 25 L 72 35 L 78 30 L 120 30 L 128 10 L 136 50 L 144 25 L 152 35 L 158 30 L 200 30" />
+                        </svg>
+                      </div>
+                      <div className="space-y-2 text-left z-10 flex-1">
+                        <h4 className="text-lg font-bold text-white">Heartbeat keeps your legacy alive</h4>
+                        <p className="text-xs text-gray-400 font-mono max-w-xl">
+                          Your vaults are protected by your heartbeat. Stay active to keep your legacy secure.
+                        </p>
+                      </div>
+                      <button 
+                        onClick={triggerGlobalHeartbeat}
+                        className="px-6 py-3.5 bg-gradient-to-r from-[#E6BE72] to-[#c5a880] text-gray-950 font-bold rounded-full text-xs font-mono cursor-pointer transition-all hover:scale-105 active:scale-95 border-0 z-10 whitespace-nowrap shadow-lg shadow-[#E6BE72]/10"
+                      >
+                        Send Heartbeat
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+
+                {/* Tab: My Vaults List view (Screen 3) */}
+                {activeTab === "my-vaults" && (
+                  <motion.div
+                    key="my-vaults-tab-view"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ duration: 0.3 }}
+                    className="space-y-6 text-left"
+                  >
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4">
+                      <div>
+                        <h2 className="text-3xl font-extrabold text-[#faf6ee] tracking-tight leading-tight">My Vaults</h2>
+                        <p className="text-xs text-gray-400 font-mono mt-1">All your created vaults in one place.</p>
+                      </div>
+                      <button 
+                        onClick={() => { setActiveTab("create-vault"); setIsWizardActive(true); setStep(1); }}
+                        className="px-5 py-3 bg-gradient-to-r from-[#E6BE72] to-[#c5a880] text-gray-950 font-bold rounded-full text-xs font-mono transition-all hover:scale-105 active:scale-95 cursor-pointer border-0 shadow-lg shadow-[#E6BE72]/10"
+                      >
+                        + Create New Vault
+                      </button>
+                    </div>
+
+                    {/* Search and Filters Bar */}
+                    <div className="flex flex-col sm:flex-row gap-4 w-full bg-[#111827]/40 border border-white/5 p-4 rounded-2xl">
+                      <div className="flex-1 relative">
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500">🔍</span>
+                        <input 
+                          type="text"
+                          placeholder="Search vaults..."
+                          className="w-full bg-[#090B14]/60 border border-white/5 rounded-xl py-2.5 pl-10 pr-4 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#E6BE72]/30 font-mono"
+                        />
+                      </div>
+                      <div className="w-full sm:w-48">
+                        <select className="w-full bg-[#090B14]/60 border border-white/5 rounded-xl py-2.5 px-4 text-xs text-gray-400 focus:outline-none focus:border-[#E6BE72]/30 font-mono">
+                          <option>All Status</option>
+                          <option>Active</option>
+                          <option>Overdue</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Vaults List Row Layout */}
+                    <div className="space-y-3">
+                      {vaults.map((v, vIdx) => {
+                        const coverImage = vIdx % 3 === 0 ? "/family_vault.png" : vIdx % 3 === 1 ? "/personal_vault.png" : "/memories_vault.png";
+                        const lastSentDays = Math.floor((Date.now() - v.lastHeartbeat) / (1000 * 60 * 60 * 24));
+                        const isOverdue = lastSentDays >= 10;
+                        
+                        return (
+                          <div 
+                            key={v.id}
+                            onClick={() => { setInspectVaultId(v.id); queryOnChainVault({ preventDefault: () => {} } as any); setActiveTab("inspector"); }}
+                            className="flex items-center justify-between p-4 bg-[#111827]/30 border border-white/5 hover:border-[#E6BE72]/30 rounded-2xl transition-all duration-300 cursor-pointer group"
+                          >
+                            <div className="flex items-center space-x-4">
+                              {/* Thumbnail Cover */}
+                              <div className="w-16 h-16 rounded-xl overflow-hidden flex-shrink-0 border border-white/5">
+                                <img src={coverImage} className="w-full h-full object-cover" />
+                              </div>
+                              <div className="space-y-1">
+                                <h4 className="font-extrabold text-white text-sm font-sans">{v.name}</h4>
+                                <div className="flex items-center text-[10px] text-gray-500 font-mono space-x-2">
+                                  <span>{v.configs.length} Recipients</span>
+                                  <span>•</span>
+                                  <span>{v.configs.flatMap(c => c.category).length} Assets</span>
+                                </div>
+                                <p className="text-[10px] text-gray-400 font-mono">
+                                  Last heartbeat: {lastSentDays === 0 ? "Today" : lastSentDays === 1 ? "1 day ago" : `${lastSentDays} days ago`}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center space-x-6">
+                              <div className="text-right">
+                                <span className="text-[10px] text-gray-500 font-mono uppercase block font-bold">Next check-in</span>
+                                {isOverdue ? (
+                                  <span className="text-xs text-red-500 font-bold font-mono">Overdue</span>
+                                ) : (
+                                  <span className="text-xs text-white font-bold font-mono">{Math.max(0, 7 - lastSentDays)} days</span>
+                                )}
+                              </div>
+                              <span className="text-gray-500 group-hover:text-[#E6BE72] transition-colors text-sm">&rarr;</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </motion.div>
+                )}
+                {activeTab === "create-vault" && (
+                  <motion.div
+                    key="create-vault-tab"
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
                     transition={{ duration: 0.3 }}
                     className="space-y-6"
                   >
-                    {!isWizardActive && (
-                      <motion.div
-                        key="dashboard-main"
-                        className="space-y-6 text-left"
-                      >
-                        {/* Welcome back Keeper */}
-                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-2">
-                          <div>
-                            <h2 className="text-3xl font-extrabold text-[#faf6ee] tracking-tight leading-tight">Welcome back 👋</h2>
-                            <p className="text-xs text-gray-400 font-mono mt-1">Manage your encrypted digital legacy securely.</p>
-                          </div>
-                          <div className="flex items-center space-x-2 bg-[#111827]/60 border border-white/5 px-4 py-2 rounded-full font-mono text-[10px] text-[#2ECC71]">
-                            <span className="w-1.5 h-1.5 rounded-full bg-[#2ECC71] animate-pulse" />
-                            <span className="text-[#faf6ee]">Base Sepolia Network</span>
-                          </div>
-                        </div>
-
-                        {/* Stats Grid Row */}
-                        <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
-                          {/* Stats Grid */}
-                          <div className="xl:col-span-3 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-                            {/* Card 1: Total Vaults */}
-                            <div className="glass-panel p-5 rounded-2xl border border-white/5 space-y-3 cursor-default glow-purple relative overflow-hidden group">
-                              <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
-                                <Shield className="w-4 h-4" />
-                              </div>
-                              <div>
-                                <span className="text-[10px] text-gray-500 font-mono uppercase block font-bold">Total Vaults</span>
-                                <div className="text-3xl font-extrabold font-mono text-[#faf6ee] mt-1">
-                                  {vaults.length}
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Card 2: Recipients */}
-                            <div className="glass-panel p-5 rounded-2xl border border-white/5 space-y-3 cursor-default glow-blue relative overflow-hidden group">
-                              <div className="w-8 h-8 rounded-lg bg-[#2ECC71]/10 border border-[#2ECC71]/20 flex items-center justify-center text-[#2ECC71]">
-                                <Plus className="w-4 h-4" />
-                              </div>
-                              <div>
-                                <span className="text-[10px] text-gray-500 font-mono uppercase block font-bold">Recipients</span>
-                                <div className="text-3xl font-extrabold font-mono text-[#faf6ee] mt-1">
-                                  {Array.from(new Set(vaults.flatMap(v => v.configs.map(c => c.recipientAddress.toLowerCase())))).length}
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Card 3: Encrypted Assets */}
-                            <div className="glass-panel p-5 rounded-2xl border border-white/5 space-y-3 cursor-default glow-gold relative overflow-hidden group">
-                              <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
-                                <Lock className="w-4 h-4" />
-                              </div>
-                              <div>
-                                <span className="text-[10px] text-gray-500 font-mono uppercase block font-bold">Encrypted Assets</span>
-                                <div className="text-3xl font-extrabold font-mono text-[#faf6ee] mt-1">
-                                  100%
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Card 4: Active Vaults */}
-                            <div className="glass-panel p-5 rounded-2xl border border-white/5 space-y-3 cursor-default glow-green relative overflow-hidden group">
-                              <div className="w-8 h-8 rounded-lg bg-[#E6BE72]/10 border border-[#E6BE72]/20 flex items-center justify-center text-[#E6BE72]">
-                                <Activity className="w-4 h-4" />
-                              </div>
-                              <div>
-                                <span className="text-[10px] text-gray-500 font-mono uppercase block font-bold">Active Vaults</span>
-                                <div className="text-3xl font-extrabold font-mono text-[#faf6ee] mt-1">
-                                  {vaults.filter(v => v.configs.some(c => c.status === "ACTIVE")).length}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Quick Actions Card */}
-                          <div className="xl:col-span-1 glass-panel p-5 rounded-2xl border border-white/5 space-y-4 cursor-default flex flex-col justify-between">
-                            <div>
-                              <span className="text-[10px] text-[#E6BE72] font-mono uppercase block font-bold tracking-wider">⚡ Quick Actions</span>
-                              <p className="text-[10px] text-gray-400 font-mono mt-1.5 leading-relaxed">
-                                Broadcast a network-wide proof-of-life heartbeat signal to keep all of your active capsules secure.
-                              </p>
-                            </div>
-                            <button 
-                              onClick={triggerGlobalHeartbeat}
-                              className="w-full py-3.5 bg-gradient-to-r from-[#E6BE72] to-[#c5a880] text-gray-950 hover:scale-[1.01] active:scale-[0.99] font-bold rounded-xl transition-all cursor-pointer text-center flex items-center justify-center space-x-2 border-0 font-mono text-[11px] shadow-lg shadow-[#E6BE72]/5"
-                            >
-                              <span>💓</span>
-                              <span>Send Global Heartbeat</span>
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Dashboard Main Grid Split */}
-                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6" id="vaults-container">
-                          
-                          {/* Left Column: Vault Cards List (Span 2) */}
-                          <div className="lg:col-span-2 space-y-6">
-                            <div className="glass-panel p-6 rounded-3xl border border-white/5 space-y-6 relative">
-                              <div className="flex justify-between items-center border-b border-white/5 pb-3">
-                                <div className="flex items-center space-x-2">
-                                  <Database className="w-4 h-4 text-[#E6BE72]" />
-                                  <h4 className="text-xs font-bold text-white font-mono uppercase tracking-wider">Your Legacy Vaults</h4>
-                                </div>
-                                <button 
-                                  onClick={() => { setIsWizardActive(true); setStep(1); }}
-                                  className="px-4 py-2 bg-gradient-to-r from-[#E6BE72] to-[#c5a880] text-gray-950 font-bold rounded-full text-[10px] font-mono transition-all hover:scale-105 active:scale-95 cursor-pointer border-0"
-                                >
-                                  + Create New Vault
-                                </button>
-                              </div>
-
-                              {/* Vaults list dashboard display */}
-                              {vaults.length > 0 ? (
-                                <div className="space-y-4">
-                                  {vaults.map(v => {
-                                    const elapsed = Math.floor((Date.now() - v.lastHeartbeat) / 1000);
-                                    
-                                    return (
-                                      <div key={v.id} className="p-5 bg-[#090B14]/40 border border-white/5 rounded-2xl space-y-4 hover:border-[#E6BE72]/30 transition-all duration-300 text-left">
-                                        <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 border-b border-white/5 pb-3 font-mono text-xs">
-                                          <div>
-                                            <h5 className="font-extrabold text-white text-sm font-mono">{v.name}</h5>
-                                            <div className="flex items-center space-x-1.5 mt-1">
-                                              <p className="text-[9px] text-gray-500 font-mono">Capsule ID: {v.id.slice(0, 14)}...{v.id.slice(-6)}</p>
-                                              <button 
-                                                onClick={() => copyToClipboard(v.id, `v-id-${v.id}`)}
-                                                className="p-0.5 text-gray-500 hover:text-[#E6BE72] rounded transition-colors cursor-pointer bg-transparent border-0 p-0"
-                                                title="Copy Vault ID"
-                                              >
-                                                {copiedShare === `v-id-${v.id}` ? (
-                                                  <Check className="w-3 h-3 text-[#2ECC71]" />
-                                                ) : (
-                                                  <Copy className="w-3 h-3" />
-                                                )}
-                                              </button>
-                                            </div>
-                                          </div>
-                                          
-                                          <div className="flex items-center gap-2">
-                                            <button
-                                              onClick={() => { setInspectVaultId(v.id); queryOnChainVault({ preventDefault: () => {} } as any); setActiveTab("inspector"); }}
-                                              className="px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20 rounded-xl text-[10px] font-bold font-mono transition-all cursor-pointer"
-                                            >
-                                              Inspect
-                                            </button>
-                                            <button
-                                              onClick={() => triggerHeartbeat(v.id)}
-                                              className="px-3 py-1.5 bg-[#E6BE72]/10 hover:bg-[#E6BE72]/20 border border-[#E6BE72]/25 text-[#E6BE72] rounded-xl text-[10px] font-bold font-mono transition-all cursor-pointer"
-                                              title="Reset inactivity countdown on smart contract"
-                                            >
-                                              Heartbeat
-                                            </button>
-                                            <button
-                                              onClick={() => triggerVeto(v.id)}
-                                              className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 border border-amber-500/25 rounded-xl text-[10px] font-bold font-mono transition-all cursor-pointer"
-                                              title="Trigger Veto to extend grace period"
-                                            >
-                                              Veto
-                                            </button>
-                                            <button
-                                              onClick={() => downloadBackupForVault(v)}
-                                              className="px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-[#2ECC71] border border-[#2ECC71]/25 rounded-xl text-[10px] font-bold font-mono transition-all cursor-pointer"
-                                              title="Export encrypted JSON backup file containing payload and beneficiary shares"
-                                            >
-                                              Export JSON
-                                            </button>
-                                            <button
-                                              onClick={() => deleteVault(v.id)}
-                                              className="p-2 bg-red-500/5 hover:bg-red-500/15 text-[#FF5A5F] border border-red-500/10 hover:border-red-500/25 rounded-xl cursor-pointer border-0"
-                                              title="Delete Vault"
-                                            >
-                                              <Trash2 className="w-3.5 h-3.5" />
-                                            </button>
-                                          </div>
-                                        </div>
-
-                                        {/* Categories list in vault */}
-                                        <div className="space-y-2">
-                                          <span className="text-[9px] text-gray-500 uppercase tracking-widest font-bold font-mono">Active Escrows</span>
-                                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                            {v.configs.map((cfg, idx) => {
-                                              const cdown = Math.max(0, cfg.inactivityPeriod - elapsed);
-                                              const gdown = Math.max(0, (cfg.inactivityPeriod + cfg.gracePeriod) - elapsed);
-                                              
-                                              return (
-                                                <div key={idx} className="p-3 bg-[#090B14]/80 border border-white/5 rounded-xl flex items-center justify-between font-mono text-[10px] gap-2">
-                                                  <div>
-                                                    <span className="font-bold text-gray-300">{cfg.category}</span>
-                                                    <p className="text-[8px] text-gray-500 mt-0.5">Heir: {cfg.recipientAddress.slice(0, 6)}...{cfg.recipientAddress.slice(-4)}</p>
-                                                  </div>
-                                                  <div className="text-right">
-                                                    {cfg.status === "ACTIVE" && <span className="text-[#2ECC71] font-bold">{cdown}s left</span>}
-                                                    {cfg.status === "PENDING_UNLOCK" && <span className="text-amber-500 animate-pulse font-bold">Grace ({gdown}s)</span>}
-                                                    {cfg.status === "UNLOCKED" && <span className="text-[#FF5A5F] font-bold">Released</span>}
-                                                  </div>
-                                                </div>
-                                              );
-                                            })}
-                                          </div>
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              ) : (
-                                <div className="p-8 text-center bg-[#090B14]/40 border border-white/5 rounded-2xl text-gray-500 text-xs font-mono">
-                                  No active memory capsules found. Click above to deploy one.
-                                </div>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Right Column: Health Status & Activity timeline (Span 1) */}
-                          <div className="space-y-6">
-                            {/* System Status Panel */}
-                            <div className="glass-panel p-6 rounded-3xl border border-white/5 space-y-4">
-                              <h4 className="text-xs font-bold text-white font-mono uppercase tracking-wider border-b border-white/5 pb-2">Protocol Status</h4>
-                              
-                              <div className="space-y-2.5 font-mono text-[10px]">
-                                {[
-                                  { name: "Wallet Connected", ok: isConnected, icon: Wallet },
-                                  { name: "Smart Contract Connected", ok: isConnected, icon: Lock },
-                                  { name: "Encryption Active", ok: true, icon: Shield },
-                                  { name: "IPFS Online", ok: true, icon: Upload },
-                                  { name: "Heartbeat Running", ok: vaults.length > 0, icon: Activity },
-                                  { name: "Recipient Ready", ok: true, icon: CheckCircle2 }
-                                ].map((status, idx) => (
-                                  <div key={idx} className="flex justify-between items-center p-2.5 bg-[#090B14]/40 border border-white/5 rounded-xl">
-                                    <div className="flex items-center space-x-2 text-gray-400">
-                                      <status.icon className="w-3.5 h-3.5 text-[#E6BE72]" />
-                                      <span>{status.name}</span>
-                                    </div>
-                                    <div className="flex items-center space-x-1.5">
-                                      <span className={`w-1.5 h-1.5 rounded-full ${status.ok ? "bg-[#2ECC71] animate-pulse" : "bg-gray-600"}`} />
-                                      <span className={status.ok ? "text-[#2ECC71] font-bold" : "text-gray-500"}>
-                                        {status.ok ? "ONLINE" : "OFFLINE"}
-                                      </span>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-
-                            {/* Recent Activity Card */}
-                            <div className="glass-panel p-6 rounded-3xl border border-white/5 space-y-4">
-                              <h4 className="text-xs font-bold text-[#faf6ee] font-mono uppercase tracking-wider border-b border-white/5 pb-2">Recent Logs</h4>
-                              
-                              <div className="space-y-4 text-left font-mono text-[10px]">
-                                {[
-                                  { label: "IPFS Gateway synced", desc: "Redundant cluster handshake ok", time: "just now", color: "bg-blue-400" },
-                                  { label: "Encrypted memory session initialized", desc: "AES-256 local keys cached", time: "2 min ago", color: "bg-[#E6BE72]" },
-                                  { label: "Heartbeat timer reset on-chain", desc: "Contract tx confirmed success", time: "1 hr ago", color: "bg-[#2ECC71]" }
-                                ].map((log, lIdx) => (
-                                  <div key={lIdx} className="flex gap-3 items-start relative">
-                                    <div className={`w-1.5 h-1.5 rounded-full mt-1 relative z-10 flex-shrink-0 ${log.color}`} />
-                                    <div className="space-y-0.5">
-                                      <p className="text-gray-300 font-bold leading-normal">{log.label}</p>
-                                      <p className="text-gray-500 text-[9px] leading-normal">{log.desc}</p>
-                                      <span className="text-[8px] text-[#E6BE72]/60 uppercase tracking-widest">{log.time}</span>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-
-                        </div>
-                      </motion.div>
-                    )}
-                               {/* Wizard Step 1: Vault Name & Content Type Selection */}
-                    {isWizardActive && step === 1 && (
+                    {step === 1 && (
                       <motion.div
                         key="wizard-step-1"
                         initial={{ opacity: 0, scale: 0.98 }}
                         animate={{ opacity: 1, scale: 1 }}
                         exit={{ opacity: 0, scale: 0.98 }}
-                        className="glass-panel p-8 md:p-12 rounded-[2rem] max-w-3xl w-full mx-auto space-y-8 relative border border-[#E6BE72]/20 shadow-2xl text-left"
+                        className="glass-panel p-8 md:p-12 rounded-[2.5rem] max-w-3xl w-full mx-auto space-y-8 relative border border-white/5 shadow-2xl text-left"
                       >
-                        {/* Stepper progress indicator */}
-                        <div className="w-full flex items-center justify-between border-b border-white/5 pb-6">
+                        <WizardStepper currentStep={1} />
+
+                        <div className="w-full flex items-center justify-between border-b border-white/5 pb-4">
                           <div className="flex items-center space-x-3">
-                            <span className="text-[9px] text-[#E6BE72] font-mono uppercase tracking-widest font-bold">Capsule Wizard</span>
-                            <h2 className="text-xl font-bold text-white">Create Capsule</h2>
-                          </div>
-                          <div className="flex items-center gap-1.5 font-mono text-[10px] text-gray-400">
-                            <span className="text-[#E6BE72] font-bold">1</span> / 4
+                            <span className="text-[9px] text-[#E6BE72] font-mono uppercase tracking-widest font-bold">Step 1 of 4</span>
+                            <h2 className="text-xl font-bold text-white">Basic Info</h2>
                           </div>
                         </div>
 
@@ -2234,15 +2176,15 @@ export default function LastWishApp() {
                           </div>
 
                           <div className="pt-4 flex justify-between items-center gap-4">
-                            <button onClick={() => setIsWizardActive(false)} className="text-xs text-gray-500 hover:text-white font-mono cursor-pointer bg-transparent border-0">
+                            <button onClick={() => setActiveTab("dashboard")} className="text-xs text-gray-500 hover:text-white font-mono cursor-pointer bg-transparent border-0 font-bold">
                               ✕ CANCEL SETUP
                             </button>
                             <button 
                               onClick={() => setStep(2)}
                               disabled={!newVaultName || !editCategory}
-                              className="w-full sm:w-auto bg-gradient-to-r from-[#E6BE72] to-[#c5a880] text-gray-950 font-bold px-8 py-3.5 rounded-full text-xs transition-all uppercase tracking-wider cursor-pointer shadow-lg disabled:opacity-40 border-0"
+                              className="w-full sm:w-auto bg-gradient-to-r from-[#E6BE72] to-[#c5a880] text-gray-950 font-bold px-8 py-3.5 rounded-full text-xs font-mono transition-all uppercase tracking-wider cursor-pointer shadow-lg disabled:opacity-40 border-0"
                             >
-                              CONTINUE SETUP →
+                              CONTINUE SETUP &rarr;
                             </button>
                           </div>
                         </div>
@@ -2250,22 +2192,20 @@ export default function LastWishApp() {
                     )}
 
                     {/* Wizard Step 2: Configure Recipients & Upload Files */}
-                    {isWizardActive && step === 2 && (
+                    {step === 2 && (
                       <motion.div
                         key="wizard-step-2"
                         initial={{ opacity: 0, scale: 0.98 }}
                         animate={{ opacity: 1, scale: 1 }}
                         exit={{ opacity: 0, scale: 0.98 }}
-                        className="glass-panel p-8 md:p-12 rounded-[2rem] max-w-3xl w-full mx-auto space-y-8 relative border border-[#E6BE72]/20 shadow-2xl text-left"
+                        className="glass-panel p-8 md:p-12 rounded-[2.5rem] max-w-3xl w-full mx-auto space-y-8 relative border border-white/5 shadow-2xl text-left"
                       >
-                        {/* Stepper progress indicator */}
-                        <div className="w-full flex items-center justify-between border-b border-white/5 pb-6">
+                        <WizardStepper currentStep={2} />
+
+                        <div className="w-full flex items-center justify-between border-b border-white/5 pb-4">
                           <div className="flex items-center space-x-3">
-                            <span className="text-[9px] text-[#E6BE72] font-mono uppercase tracking-widest font-bold">Capsule Wizard</span>
-                            <h2 className="text-xl font-bold text-white">Configure Escrows</h2>
-                          </div>
-                          <div className="flex items-center gap-1.5 font-mono text-[10px] text-gray-400">
-                            <span className="text-[#E6BE72] font-bold">2</span> / 4
+                            <span className="text-[9px] text-[#E6BE72] font-mono uppercase tracking-widest font-bold">Step 2 of 4</span>
+                            <h2 className="text-xl font-bold text-white">Add Assets</h2>
                           </div>
                         </div>
 
@@ -2439,22 +2379,20 @@ export default function LastWishApp() {
                     )}
 
                     {/* Wizard Step 3: Review and Deploy */}
-                    {isWizardActive && step === 3 && (
+                    {step === 3 && (
                       <motion.div
                         key="wizard-step-3"
                         initial={{ opacity: 0, scale: 0.98 }}
                         animate={{ opacity: 1, scale: 1 }}
                         exit={{ opacity: 0, scale: 0.98 }}
-                        className="glass-panel p-8 md:p-12 rounded-[2rem] max-w-3xl w-full mx-auto space-y-8 relative border border-[#E6BE72]/20 shadow-2xl text-left"
+                        className="glass-panel p-8 md:p-12 rounded-[2.5rem] max-w-3xl w-full mx-auto space-y-8 relative border border-white/5 shadow-2xl text-left"
                       >
-                        {/* Stepper progress indicator */}
-                        <div className="w-full flex items-center justify-between border-b border-white/5 pb-6">
+                        <WizardStepper currentStep={3} />
+
+                        <div className="w-full flex items-center justify-between border-b border-white/5 pb-4">
                           <div className="flex items-center space-x-3">
-                            <span className="text-[9px] text-[#E6BE72] font-mono uppercase tracking-widest font-bold">Capsule Wizard</span>
-                            <h2 className="text-xl font-bold text-white">Review Summary</h2>
-                          </div>
-                          <div className="flex items-center gap-1.5 font-mono text-[10px] text-gray-400">
-                            <span className="text-[#E6BE72] font-bold">3</span> / 4
+                            <span className="text-[9px] text-[#E6BE72] font-mono uppercase tracking-widest font-bold">Step 3 of 4</span>
+                            <h2 className="text-xl font-bold text-white">Set Recipients</h2>
                           </div>
                         </div>
 
@@ -2464,19 +2402,43 @@ export default function LastWishApp() {
                             <span className="text-white font-extrabold text-sm">{newVaultName}</span>
                           </div>
 
-                          <div className="space-y-3 font-mono">
-                            <span className="text-[9px] text-gray-500 uppercase block font-bold tracking-widest">Configured Category Escrows</span>
-                            <div className="grid grid-cols-1 gap-3">
-                              {wizardCategories.map((c, i) => (
-                                <div key={i} className="p-4 bg-[#111827]/60 border border-white/5 rounded-2xl text-xs space-y-2">
-                                  <div className="flex justify-between items-center border-b border-white/5 pb-1">
-                                    <span className="font-bold text-[#E6BE72] text-sm">{c.category}</span>
-                                    <span className="text-[10px] text-gray-500">Inactivity: {c.inactivityPeriod}s | Grace: {c.gracePeriod}s</span>
+                          <div className="space-y-4">
+                            <span className="text-[9px] text-gray-500 uppercase block font-bold tracking-widest font-mono">Designated Beneficiaries</span>
+                            
+                            <div className="grid grid-cols-1 gap-4">
+                              {wizardCategories.map((c, i) => {
+                                const colors = ["bg-blue-500/10 text-blue-400 border-blue-500/20", "bg-[#E6BE72]/10 text-[#E6BE72] border-[#E6BE72]/20", "bg-purple-500/10 text-purple-400 border-purple-500/20", "bg-[#2ECC71]/10 text-[#2ECC71] border-[#2ECC71]/20"];
+                                const colorClass = colors[i % colors.length];
+                                
+                                return (
+                                  <div key={i} className="p-5 bg-[#111827]/40 border border-white/5 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 font-mono text-xs">
+                                    <div className="flex items-center gap-3">
+                                      <div className={`w-10 h-10 rounded-full border flex items-center justify-center font-bold text-sm ${colorClass}`}>
+                                        {c.category.slice(0, 2).toUpperCase()}
+                                      </div>
+                                      <div className="space-y-0.5">
+                                        <h5 className="font-bold text-white">{c.category} Escrow</h5>
+                                        <p className="text-[9px] text-gray-400 truncate max-w-[200px] sm:max-w-none">Heir: {c.recipient}</p>
+                                        {c.fileName && <p className="text-[9px] text-[#2ECC71]">📄 {c.fileName}</p>}
+                                      </div>
+                                    </div>
+                                    
+                                    <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+                                      <div className="text-right">
+                                        <span className="text-[8px] text-gray-500 uppercase block font-bold">Release Condition</span>
+                                        <span className="text-[10px] text-[#E6BE72] font-bold">{c.inactivityPeriod}s Inactivity</span>
+                                      </div>
+                                      <button
+                                        onClick={() => removeCategoryFromWizard(c.id)}
+                                        className="p-2 bg-red-500/5 hover:bg-red-500/15 border border-red-500/10 hover:border-red-500/25 rounded-xl text-[#FF5A5F] cursor-pointer"
+                                        title="Remove Recipient"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
                                   </div>
-                                  <p className="text-[10px] text-gray-400 truncate">Beneficiary: {c.recipient}</p>
-                                  {c.fileName && <p className="text-[10px] text-[#2ECC71] font-bold">📄 {c.fileName} ({Math.round(c.content.length / 1024)} KB)</p>}
-                                </div>
-                              ))}
+                                );
+                              })}
                             </div>
                           </div>
 
@@ -2493,14 +2455,14 @@ export default function LastWishApp() {
                             </div>
                           ) : (
                             <div className="pt-4 flex justify-between items-center gap-4">
-                              <button onClick={() => setStep(2)} className="text-xs text-gray-500 hover:text-white font-mono cursor-pointer bg-transparent border-0">
-                                &lt;&lt; BACK
+                              <button onClick={() => setStep(2)} className="text-xs text-gray-500 hover:text-white font-mono cursor-pointer bg-transparent border-0 font-bold">
+                                &larr; BACK
                               </button>
                               <button 
                                 onClick={handleCreateVault}
-                                className="w-full sm:w-auto bg-gradient-to-r from-[#E6BE72] to-[#c5a880] text-gray-950 font-bold px-8 py-3.5 rounded-full text-xs transition-all uppercase tracking-wider cursor-pointer shadow-lg border-0"
+                                className="bg-gradient-to-r from-[#E6BE72] to-[#c5a880] text-gray-950 font-bold px-8 py-3.5 rounded-full text-xs font-mono transition-all uppercase tracking-wider cursor-pointer shadow-lg border-0"
                               >
-                                ENCRYPT & DEPLOY CAPSULE →
+                                Encrypt & Deploy Capsule &rarr;
                               </button>
                             </div>
                           )}
@@ -2509,22 +2471,20 @@ export default function LastWishApp() {
                     )}
 
                     {/* Wizard Step 4: Receipt */}
-                    {isWizardActive && step === 4 && (
+                    {step === 4 && (
                       <motion.div
                         key="wizard-step-4"
                         initial={{ opacity: 0, scale: 0.98 }}
                         animate={{ opacity: 1, scale: 1 }}
                         exit={{ opacity: 0, scale: 0.98 }}
-                        className="glass-panel p-8 md:p-12 rounded-[2rem] max-w-3xl w-full mx-auto space-y-8 relative border border-[#E6BE72]/20 shadow-2xl text-left"
+                        className="glass-panel p-8 md:p-12 rounded-[2.5rem] max-w-3xl w-full mx-auto space-y-8 relative border border-white/5 shadow-2xl text-left"
                       >
-                        {/* Stepper progress indicator */}
-                        <div className="w-full flex items-center justify-between border-b border-white/5 pb-6">
+                        <WizardStepper currentStep={4} />
+
+                        <div className="w-full flex items-center justify-between border-b border-white/5 pb-4">
                           <div className="flex items-center space-x-3">
-                            <span className="text-[9px] text-[#E6BE72] font-mono uppercase tracking-widest font-bold">Capsule Wizard</span>
+                            <span className="text-[9px] text-[#E6BE72] font-mono uppercase tracking-widest font-bold">Step 4 of 4</span>
                             <h2 className="text-xl font-bold text-white">Receipt Summary</h2>
-                          </div>
-                          <div className="flex items-center gap-1.5 font-mono text-[10px] text-gray-400">
-                            <span className="text-[#2ECC71] font-bold">✓</span> Done
                           </div>
                         </div>
 
@@ -2796,20 +2756,217 @@ export default function LastWishApp() {
                             </div>
                           </div>
                         ) : (
-                          <div className="text-center space-y-4">
-                            {/* Closed Chest SVG */}
-                            <svg viewBox="0 0 100 100" className="w-24 h-24 mx-auto text-[#E6BE72] drop-shadow-[0_0_20px_rgba(230,190,114,0.15)]">
-                              <rect x="15" y="45" width="70" height="40" rx="8" fill="#111827" stroke="#E6BE72" strokeWidth="2.5" />
-                              <path d="M 15 45 C 15 20, 85 20, 85 45 Z" fill="#111827" stroke="#E6BE72" strokeWidth="2.5" />
-                              <rect x="44" y="38" width="12" height="15" rx="3" fill="#090B14" stroke="#E6BE72" strokeWidth="2" />
-                              <circle cx="50" cy="45" r="2.5" fill="#E6BE72" />
-                            </svg>
-                            <p className="text-gray-500 font-mono text-[10px]">
-                              {isDecrypting ? "Unlocking vault chambers..." : "Enter Vault details to decrypt escrow files."}
-                            </p>
+                          <div className="w-full space-y-6 text-left">
+                            {/* Secure Padlock Alert */}
+                            <div className="p-4 bg-[#E6BE72]/5 border border-[#E6BE72]/20 rounded-2xl flex items-start gap-3">
+                              <div className="p-2 bg-[#E6BE72]/10 border border-[#E6BE72]/20 rounded-xl text-[#E6BE72] mt-0.5">
+                                <Lock className="w-4 h-4 animate-pulse" />
+                              </div>
+                              <div className="space-y-1">
+                                <h4 className="text-xs font-bold text-white font-mono">Secure Client-Side Decryption</h4>
+                                <p className="text-[10px] text-gray-400 font-mono leading-relaxed">
+                                  This portal combines your private key share (Share 2) with the on-chain key share (Share 1) to decrypt the legacy payload in your browser. All computations are local; your private key is never transmitted.
+                                </p>
+                              </div>
+                            </div>
+
+                            {/* How it works steps list */}
+                            <div className="space-y-3 font-mono">
+                              <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">How it works?</h4>
+                              
+                              <div className="space-y-3">
+                                {[
+                                  { step: 1, title: "Request Access", desc: "Enter the Capsule Vault ID provided by the owner." },
+                                  { step: 2, title: "Contract Release", desc: "If owner inactivity is verified on-chain, the contract releases Share 1." },
+                                  { step: 3, title: "Combine Shares", desc: "Local SSS Lagrange solver reconstructs the 256-bit decryption key." },
+                                  { step: 4, title: "Locally Decrypt", desc: "Ciphertext is fetched from IPFS and decrypted in your browser memory." }
+                                ].map((s) => (
+                                  <div key={s.step} className="flex gap-3 items-start">
+                                    <div className="w-5 h-5 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-[9px] font-bold text-gray-400 flex-shrink-0 mt-0.5">
+                                      {s.step}
+                                    </div>
+                                    <div>
+                                      <h5 className="text-[11px] font-bold text-white leading-tight">{s.title}</h5>
+                                      <p className="text-[9px] text-gray-500 leading-normal mt-0.5">{s.desc}</p>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
                           </div>
                         )}
                       </div>
+                    </div>
+                  </motion.div>
+                )}
+
+                {/* Tab: Heartbeat Check-in */}
+                {activeTab === "heartbeat" && (
+                  <motion.div
+                    key="heartbeat-tab-view"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ duration: 0.3 }}
+                    className="space-y-6 text-left"
+                  >
+                    <div>
+                      <h2 className="text-3xl font-extrabold text-[#faf6ee] tracking-tight leading-tight">Heartbeat Status</h2>
+                      <p className="text-xs text-gray-400 font-mono mt-1 font-bold">Stay active. Keep your legacy protected.</p>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch">
+                      {/* Left: Heartbeat pulse card */}
+                      <div className="glass-panel p-8 rounded-[2.5rem] border border-white/5 flex flex-col items-center justify-center text-center space-y-6">
+                        <div className="w-36 h-36 rounded-full bg-[#2ECC71]/10 border border-[#2ECC71]/20 flex items-center justify-center text-[#2ECC71] relative">
+                          <div className="absolute inset-0 rounded-full bg-[#2ECC71]/5 animate-ping" />
+                          <span className="text-6xl animate-pulse">💚</span>
+                        </div>
+                        <div className="space-y-2">
+                          <h3 className="text-xl font-bold text-white font-sans">Active & Secure</h3>
+                          <p className="text-xs text-gray-400 font-mono">Your proof-of-life status is operational.</p>
+                          <span className="inline-block mt-3 text-[10px] text-[#2ECC71] bg-[#2ECC71]/10 border border-[#2ECC71]/20 px-3 py-1 rounded-full font-bold font-mono">
+                            Next check-in required in 5 days
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Right: Settings and check-in configuration */}
+                      <div className="glass-panel p-8 rounded-[2.5rem] border border-white/5 space-y-6 flex flex-col justify-between">
+                        <div className="space-y-4">
+                          <h3 className="text-sm font-bold text-white font-mono uppercase tracking-wider border-b border-white/5 pb-2">Check-in Configuration</h3>
+                          
+                          <div className="grid grid-cols-2 gap-4 font-mono text-xs">
+                            <div className="space-y-0.5">
+                              <span className="text-[9px] text-gray-500 block uppercase">Check-in Interval</span>
+                              <span className="text-white font-bold">7 Days</span>
+                            </div>
+                            <div className="space-y-0.5">
+                              <span className="text-[9px] text-gray-500 block uppercase">Grace Period</span>
+                              <span className="text-white font-bold">2 Days</span>
+                            </div>
+                            <div className="space-y-0.5">
+                              <span className="text-[9px] text-gray-500 block uppercase">Default Category</span>
+                              <span className="text-[#E6BE72] font-bold">Memories</span>
+                            </div>
+                            <div className="space-y-0.5">
+                              <span className="text-[9px] text-gray-500 block uppercase">Status Watching</span>
+                              <span className="text-[#2ECC71] font-bold">Online</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <button 
+                          onClick={triggerGlobalHeartbeat}
+                          className="w-full py-3.5 bg-gradient-to-r from-[#E6BE72] to-[#c5a880] text-gray-950 hover:scale-[1.01] active:scale-[0.99] font-bold rounded-xl transition-all cursor-pointer text-center flex items-center justify-center space-x-2 border-0 font-mono text-[11px] shadow-lg shadow-[#E6BE72]/10"
+                        >
+                          <span>💓</span>
+                          <span>Send Proof-of-Life Heartbeat</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* 3 Status Columns */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 font-mono text-xs">
+                      <div className="glass-panel p-5 rounded-2xl border border-white/5 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-white">Wallet Connection</span>
+                          <span className="w-2 h-2 rounded-full bg-[#2ECC71] animate-pulse" />
+                        </div>
+                        <p className="text-[10px] text-gray-400 leading-relaxed">
+                          Your active Ethereum account is linked to the smart contract registry.
+                        </p>
+                      </div>
+
+                      <div className="glass-panel p-5 rounded-2xl border border-white/5 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-white">On-chain Registry</span>
+                          <span className="w-2 h-2 rounded-full bg-[#2ECC71] animate-pulse" />
+                        </div>
+                        <p className="text-[10px] text-gray-400 leading-relaxed">
+                          Heartbeat transaction logs are verified and indexed by blockchain watchers.
+                        </p>
+                      </div>
+
+                      <div className="glass-panel p-5 rounded-2xl border border-white/5 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-white">Keeper Network</span>
+                          <span className="w-2 h-2 rounded-full bg-[#2ECC71] animate-pulse" />
+                        </div>
+                        <p className="text-[10px] text-gray-400 leading-relaxed">
+                          Decentralized nodes monitor inactivity intervals to release assets securely.
+                        </p>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+
+                {/* Tab: Resources */}
+                {activeTab === "resources" && (
+                  <motion.div
+                    key="resources-tab-view"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ duration: 0.3 }}
+                    className="space-y-6 text-left"
+                  >
+                    <div>
+                      <h2 className="text-3xl font-extrabold text-[#faf6ee] tracking-tight leading-tight">Resources & Help</h2>
+                      <p className="text-xs text-gray-400 font-mono mt-1">Everything you need to know about LastWish.</p>
+                    </div>
+
+                    {/* Resources Help Grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+                      <div className="glass-panel p-6 rounded-3xl border border-white/5 space-y-3">
+                        <h3 className="text-xs font-bold text-[#E6BE72] font-mono uppercase tracking-wider">📚 Getting Started Guides</h3>
+                        <div className="space-y-2.5 font-mono text-[11px] text-gray-400">
+                          <div className="hover:text-white cursor-pointer transition-colors">👉 How to create a legacy vault</div>
+                          <div className="hover:text-white cursor-pointer transition-colors">👉 Understanding Shamir's Secret Sharing</div>
+                          <div className="hover:text-white cursor-pointer transition-colors">👉 Recipient onboarding tutorial</div>
+                        </div>
+                      </div>
+
+                      <div className="glass-panel p-6 rounded-3xl border border-white/5 space-y-3">
+                        <h3 className="text-xs font-bold text-[#E6BE72] font-mono uppercase tracking-wider">❓ Frequently Asked Questions</h3>
+                        <div className="space-y-2.5 font-mono text-[11px] text-gray-400">
+                          <div className="hover:text-white cursor-pointer transition-colors">👉 What if I lose my recipient key share?</div>
+                          <div className="hover:text-white cursor-pointer transition-colors">👉 How are encrypted files stored on IPFS?</div>
+                          <div className="hover:text-white cursor-pointer transition-colors">👉 Can the contract release shares early?</div>
+                        </div>
+                      </div>
+
+                      <div className="glass-panel p-6 rounded-3xl border border-white/5 space-y-3">
+                        <h3 className="text-xs font-bold text-[#E6BE72] font-mono uppercase tracking-wider">🛡️ Cryptographic Security</h3>
+                        <div className="space-y-2.5 font-mono text-[11px] text-gray-400">
+                          <div className="hover:text-white cursor-pointer transition-colors">👉 Local AES-256 GCM key derivation</div>
+                          <div className="hover:text-white cursor-pointer transition-colors">👉 Smart contract access control layers</div>
+                          <div className="hover:text-white cursor-pointer transition-colors">👉 Zero-knowledge proofs & privacy</div>
+                        </div>
+                      </div>
+
+                      <div className="glass-panel p-6 rounded-3xl border border-white/5 space-y-3">
+                        <h3 className="text-xs font-bold text-[#E6BE72] font-mono uppercase tracking-wider">📢 Product Blog & Updates</h3>
+                        <div className="space-y-2.5 font-mono text-[11px] text-gray-400">
+                          <div className="hover:text-white cursor-pointer transition-colors">👉 Multi-sig legacy rules release</div>
+                          <div className="hover:text-white cursor-pointer transition-colors">👉 Mobile key backup integration</div>
+                          <div className="hover:text-white cursor-pointer transition-colors">👉 Gasless checks-in on Base</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Support Banner */}
+                    <div className="p-6 bg-gradient-to-r from-blue-500/5 to-purple-500/5 border border-white/5 rounded-3xl flex flex-col sm:flex-row items-center justify-between gap-4">
+                      <div className="space-y-1 font-mono text-xs">
+                        <h4 className="font-bold text-white">Still have questions?</h4>
+                        <p className="text-[10px] text-gray-400">Our support engineers and crypto researchers are online 24/7.</p>
+                      </div>
+                      <button 
+                        onClick={() => alert("Support ticket system initiated. Connecting to a specialist...")}
+                        className="px-5 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 text-white font-bold rounded-xl text-xs font-mono transition-all cursor-pointer whitespace-nowrap"
+                      >
+                        Contact Support
+                      </button>
                     </div>
                   </motion.div>
                 )}
