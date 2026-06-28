@@ -86,6 +86,17 @@ body {
   animation: float-text 6s infinite ease-in-out;
 }
 
+/* Hero headline float — two lines drift at offset phases */
+@keyframes hero-float-1 {
+  0%, 100% { transform: translateY(0px); }
+  45%       { transform: translateY(-7px); }
+}
+
+@keyframes hero-float-2 {
+  0%, 100% { transform: translateY(0px); }
+  45%       { transform: translateY(-5px); }
+}
+
 /* Perspective Grid Scroll Animation (from landing page mockup) */
 .perspective-container {
   perspective: 300px;

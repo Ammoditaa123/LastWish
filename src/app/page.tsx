@@ -101,11 +101,15 @@ interface ScrambledTextProps {
   children: string;
 }
 
+/**
+ * ScrambledText — pointer-proximity scramble effect using vanilla JS timers.
+ * Inspired by Tom Miller / creativeocean (no paid GSAP plugins required).
+ */
 const ScrambledText: React.FC<ScrambledTextProps> = ({
-  radius = 50,
-  duration = 1.2,
-  speed = 0.5,
-  scrambleChars = '.:',
+  radius = 80,
+  duration = 1.0,
+  speed = 0.6,
+  scrambleChars = '.:•*+-',
   className = '',
   style = {},
   children
@@ -115,83 +119,65 @@ const ScrambledText: React.FC<ScrambledTextProps> = ({
   useEffect(() => {
     if (!rootRef.current) return;
     const parent = rootRef.current;
-    
-    // Split text into individual span characters
-    const text = parent.textContent || '';
+
+    // Split text into individual character spans
+    const text = children;
     parent.innerHTML = '';
-    
+
     const charSpans = text.split('').map((char: string) => {
       const span = document.createElement('span');
-      span.className = 'inline-block will-change-transform';
+      span.style.display = 'inline-block';
+      span.style.willChange = 'transform';
       span.textContent = char;
       span.setAttribute('data-content', char);
       parent.appendChild(span);
       return span;
     });
 
-    const activeTimers = new Map<HTMLSpanElement, {
-      timer: any;
-      restoreTimer: any;
-    }>();
+    type TimerEntry = { intervalId: ReturnType<typeof setInterval>; timeoutId: ReturnType<typeof setTimeout> };
+    const active = new Map<HTMLSpanElement, TimerEntry>();
 
     const handleMove = (e: PointerEvent) => {
       charSpans.forEach((span: HTMLSpanElement) => {
         const { left, top, width, height } = span.getBoundingClientRect();
-        const centerX = left + width / 2;
-        const centerY = top + height / 2;
-        const dx = e.clientX - centerX;
-        const dy = e.clientY - centerY;
+        const dx = e.clientX - (left + width / 2);
+        const dy = e.clientY - (top + height / 2);
         const dist = Math.hypot(dx, dy);
 
-        if (dist < radius) {
-          // If already scrambling, ignore or refresh
-          if (activeTimers.has(span)) {
-            return;
-          }
+        if (dist < radius && !active.has(span)) {
+          const orig = span.getAttribute('data-content') || '';
+          if (!orig.trim()) return;
 
-          const originalChar = span.getAttribute('data-content') || '';
-          if (originalChar === ' ') return; // Don't scramble spaces
+          const ms = Math.max(80, duration * (1 - dist / radius) * 1000);
+          const intervalMs = Math.max(30, Math.round(50 / speed));
 
-          const scrambleDuration = duration * (1 - dist / radius) * 1000;
-          
-          // Scramble characters periodically based on speed
           const intervalId = setInterval(() => {
-            const randIdx = Math.floor(Math.random() * scrambleChars.length);
-            span.textContent = scrambleChars[randIdx];
-          }, 60 / speed); // speed scaling
+            span.textContent = scrambleChars[Math.floor(Math.random() * scrambleChars.length)];
+          }, intervalMs);
 
-          // Restore original character after scrambleDuration
-          const restoreTimeoutId = setTimeout(() => {
+          const timeoutId = setTimeout(() => {
             clearInterval(intervalId);
-            span.textContent = originalChar;
-            activeTimers.delete(span);
-          }, scrambleDuration);
+            span.textContent = orig;
+            active.delete(span);
+          }, ms);
 
-          activeTimers.set(span, {
-            timer: intervalId,
-            restoreTimer: restoreTimeoutId
-          });
+          active.set(span, { intervalId, timeoutId });
         }
       });
     };
 
     window.addEventListener('pointermove', handleMove);
-
     return () => {
       window.removeEventListener('pointermove', handleMove);
-      activeTimers.forEach((timers) => {
-        clearInterval(timers.timer);
-        clearTimeout(timers.restoreTimer);
+      active.forEach(({ intervalId, timeoutId }) => {
+        clearInterval(intervalId);
+        clearTimeout(timeoutId);
       });
     };
-  }, [radius, duration, speed, scrambleChars]);
+  }, [radius, duration, speed, scrambleChars, children]);
 
   return (
-    <span
-      ref={rootRef}
-      className={className}
-      style={style}
-    >
+    <span ref={rootRef} className={className} style={style}>
       {children}
     </span>
   );
@@ -1521,18 +1507,39 @@ const MOCK_VAULTS: Vault[] = [
                           Protocol v2.1 Active
                         </span>
                         
-                        <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight leading-[1.05] text-[#faf6ee] font-sans">
-                          Your Digital Legacy.<br />
+                        {/* Line 1 — gentle float */}
+                        <h1
+                          className="text-5xl md:text-7xl font-extrabold tracking-tight leading-[1.1] text-[#faf6ee] font-sans"
+                          style={{
+                            animation: 'hero-float-1 6s ease-in-out infinite',
+                            display: 'block'
+                          }}
+                        >
+                          Your Digital Legacy.
+                        </h1>
+
+                        {/* Line 2 — ScrambledText with gold gradient, slightly offset float */}
+                        <h2
+                          className="text-5xl md:text-7xl font-extrabold tracking-tight leading-[1.1] font-sans mt-1"
+                          style={{
+                            animation: 'hero-float-2 6s ease-in-out infinite',
+                            display: 'block'
+                          }}
+                        >
                           <ScrambledText
-                            className="text-transparent bg-clip-text bg-gradient-to-r from-[#E6BE72] via-[#E6BE72]/85 to-[#faf6ee]"
-                            radius={50}
-                            duration={1.2}
-                            speed={0.5}
-                            scrambleChars=".:"
+                            className="font-extrabold"
+                            style={{
+                              color: '#E6BE72',
+                              textShadow: '0 0 22px rgba(230,190,114,0.55), 0 0 8px rgba(230,190,114,0.3)',
+                            }}
+                            radius={80}
+                            duration={1.0}
+                            speed={0.6}
+                            scrambleChars=".:•*"
                           >
                             Secured Beyond Time.
                           </ScrambledText>
-                        </h1>
+                        </h2>
                         
                         <p className="text-gray-400 text-sm md:text-base leading-relaxed max-w-xl mx-auto">
                           Store memories, important documents, and digital assets securely. LastWish ensures your legacy reaches the right people at the right moment.
